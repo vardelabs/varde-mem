@@ -91,15 +91,41 @@ ROOT_ENV = "AGENT_VAULT"
 # only knows where a session started.
 def _resolve_root():
     """(root, config path). Dies when neither the walk nor the environment
-    answers."""
+    answers.
+
+    The walk warns when it had to cross a CHECKOUT BOUNDARY to find the config,
+    because a tree that declares nothing is not the same as a tree that
+    declares its parent's layout. The vault this tool came from puts its
+    worktrees INSIDE the primary checkout, so a worktree with no config of its
+    own resolves to the primary one: the same wrong-tree write, arriving by a
+    different road. The warning is what `warn_wrong_checkout` used to do, and
+    it is more precise than that version could be, because the boundary is
+    visible here and `__file__` could not see it at all.
+
+    One filename is the whole of what this knows about version control. It is a
+    marker, not an integration: no subprocess, and a tree that is not a
+    checkout simply never sets `crossed`."""
     try:
         here = Path.cwd().resolve()
     except OSError:
         here = None                     # cwd deleted out from under us
     if here is not None:
+        crossed = None
         for d in (here, *here.parents):
             if (d / CONFIG_NAME).is_file():
+                if crossed is not None:
+                    print("!! Using the %s at %s,\n!! but the current "
+                          "directory is inside %s, a separate checkout that "
+                          "declares none.\n!! Writes land in the FORMER. Add "
+                          "a %s to the latter if you meant it."
+                          % (CONFIG_NAME, d, crossed, CONFIG_NAME),
+                          file=sys.stderr)
                 return d, d / CONFIG_NAME
+            # Checked AFTER the config, so a checkout that declares itself is
+            # never reported as one that was crossed. Only the FIRST boundary
+            # is kept: it is the one the caller is standing in.
+            if crossed is None and (d / ".git").exists():
+                crossed = d
     env = os.environ.get(ROOT_ENV)
     if env:
         return Path(env), Path(env) / CONFIG_NAME
@@ -2247,6 +2273,22 @@ def cmd_selftest(args):
         rc, out = _run(deep, "read")
         check(rc == 0 and "3 days" in out,
               "the config is found by walking up from a subdirectory")
+        check("separate checkout" not in out,
+              "and crossing no checkout boundary says nothing")
+        # A checkout that declares no config of its own. The walk still
+        # answers, from the tree above, and has to SAY so: this is the shape
+        # the vault produces, because it nests worktrees inside the primary
+        # checkout. A `.git` FILE, which is what a worktree has, not a
+        # directory.
+        inner = Path(td) / "inner"
+        inner.mkdir()
+        (inner / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
+        rc, out = _run(inner, "read")
+        check(rc == 0 and "3 days" in out,
+              "a checkout with no config still resolves, from the tree above")
+        check("separate checkout" in out and str(inner) in out
+              and str(td) in out,
+              "and the crossing is named, with both trees")
         # Nothing above a throwaway tree carries a config, so this is the
         # fallback branch with nothing else to find.
         outside = Path(tempfile.mkdtemp(prefix="vardemem-outside-"))
@@ -2298,13 +2340,18 @@ def cmd_selftest(args):
         (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
         rc, out = _run(jdir, "put", "2026-03-04", "recorded")
         wrote = jdir / "INDEX.md"
-        check(rc == 0 and wrote.is_file() and "recorded" in
-              wrote.read_text(encoding="utf-8"),
+        # Read ONCE, and tolerate the file being absent. Reading inside each
+        # assertion made the second raise FileNotFoundError the moment the
+        # first failed, so a mutation that should have printed two FAIL lines
+        # printed one and a traceback, and every check after it never ran. An
+        # assertion that turns a failure into a crash hides the suite.
+        body = wrote.read_text(encoding="utf-8") if wrote.is_file() else ""
+        check(rc == 0 and "recorded" in body,
               "the spine filename is configurable")
         # The header a reader sees has to name the journal THIS tree
         # configured. It used to carry one hardcoded path, which after
         # extraction would be a path that need not exist anywhere.
-        check("rebuildable from `history/`" in wrote.read_text(encoding="utf-8"),
+        check("rebuildable from `history/`" in body,
               "and the spine header names the configured journal")
     finally:
         shutil.rmtree(td, ignore_errors=True)
