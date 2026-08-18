@@ -1,0 +1,43 @@
+# This repository is public-ready. Do not commit private deployment state.
+.env
+.env.*
+!.env.example
+.envrc
+.secrets
+
+# Journal content is real session history and never enters this repository,
+# fixtures included. These patterns are a guard against an accidental `git
+# add`, not a substitute for reading the diff.
+journal-*.md
+SPINE.md
+.vardemem.json
+.spine.lock
+*.md.tmp*
+
+# Credentials and keys, ignored wherever they appear.
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.p8
+*.jks
+id_rsa
+id_dsa
+id_ecdsa
+id_ed25519
+
+# Local runtime state.
+/logs/
+/runtime/
+/private-overlay
+/private-overlay.*
+*.sock
+*.log
+
+# Python.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/

@@ -1,0 +1,27 @@
+name: selftest
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  selftest:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # The tool is standard library only, so the runner's own interpreter is
+      # the one worth testing. Adding setup-python would test a version this
+      # fleet does not run.
+      - run: python3 -c "import ast, pathlib; ast.parse(pathlib.Path('vardemem.py').read_text())"
+      # From a directory that is NOT the checkout, so a selftest that quietly
+      # depended on sitting next to something fails here rather than in a year.
+      - run: cd "$RUNNER_TEMP" && python3 "$GITHUB_WORKSPACE/vardemem.py" selftest
+      - run: python3 vardemem.py selftest
