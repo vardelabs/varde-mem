@@ -142,7 +142,9 @@ def _warn_wrong_tree(root, rel):
     """Warn when cwd sits inside a DIFFERENT tree holding the same journal
     layout. `warn_wrong_checkout` from the vault copy, with its one hardcoded
     path parameterised. Runs on BOTH answers from _resolve_root, not just the
-    walk: the environment branch is the one the ordering exists to police."""
+    walk: the environment branch is the one the ordering exists to police. Do
+    not key this on a `.git` entry instead: that warns for an unrelated
+    repository and stays quiet for a journal tree that is not a checkout."""
     try:
         here = Path.cwd()
     except OSError:
@@ -165,8 +167,9 @@ def _cfg_path(path, key, value):
     if not isinstance(value, str) or not value.strip():
         die('%s: "%s" must be a non-empty string, not %r.' % (path, key, value))
     p = Path(value)
-    if p.is_absolute() or ".." in p.parts:
-        die('%s: "%s" must stay under its base, not %r.' % (path, key, value))
+    if p.is_absolute() or ".." in p.parts or not p.parts:
+        die('%s: "%s" must name a path under its base, not %r.'
+            % (path, key, value))
     return value
 
 
@@ -2416,12 +2419,14 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # A valid STRING naming an unusable FILE. Both verbs: they reach the spine
-    # by different routes.
+    # A valid STRING naming a directory. Both verbs: they reach the spine by
+    # different routes.
     td, jdir, spine_md = _mkroot([], ndays=0)
     try:
         (Path(td) / CONFIG_NAME).write_text(
-            json.dumps({"journal": "history", "spine": "."}), encoding="utf-8")
+            json.dumps({"journal": "history", "spine": "adir"}),
+            encoding="utf-8")
+        (jdir / "adir").mkdir()
         (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
         for verb, argv in (("read", ("read",)),
                            ("put", ("put", "2026-03-04", "x"))):
@@ -2446,6 +2451,7 @@ def cmd_selftest(args):
     for label, text, want in (
             ("an absolute path", '{"journal": "/tmp/elsewhere"}', "under its base"),
             ("an escaping path", '{"journal": "../elsewhere"}', "under its base"),
+            ("a path naming its own base", '{"journal": "."}', "under its base"),
             ("malformed JSON", "{not json", "valid JSON"),
             ("a non-object", '["history"]', "JSON object"),
             ("a non-string path", '{"journal": 7}', '"journal"'),
