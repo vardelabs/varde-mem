@@ -182,7 +182,19 @@ def _warn_wrong_tree(root, rel):
 def _cfg_path(path, key, value):
     """One configured path, checked where it is READ. Path() accepts a number
     or an empty string and turns it into a confusing failure much further
-    downstream, at a site with no idea a config file was involved."""
+    downstream, at a site with no idea a config file was involved.
+
+    A value that is ABSOLUTE, or that climbs out with `..`, is honoured. Path
+    joining does that on its own and it is left alone deliberately: the root
+    marker answers "which tree am I talking to", and it was never a sandbox.
+    The only writer of this file is whoever owns the tree, there is no
+    untrusted input anywhere in the path, and a journal on another volume is a
+    thing configuration is allowed to say. Rejecting it would break that case
+    to defend a boundary nothing else in this tool treats as one. Codex read
+    the same mechanism and graded it BLOCKING on the strength of the docs,
+    which said "relative to the root" and did not say what an absolute value
+    does; the docs were the incomplete half, so they say it now and a check
+    below pins it as a contract rather than an accident of pathlib."""
     if not isinstance(value, str) or not value.strip():
         die('%s: "%s" must be a non-empty string, not %r.' % (path, key, value))
     return value
@@ -505,8 +517,21 @@ def parse():
     days, rollups, problems, roll_bad = [], {}, [], []
     if not spine_path().exists():
         return days, rollups, problems, roll_bad
+    # EXISTING is not READABLE. The vault copy had the same unguarded read and
+    # the same crash, but reaching it needed someone to create a DIRECTORY
+    # named SPINE.md; a configured spine path reaches it with one character
+    # (`"spine": "."` resolves to the journal directory), so the config layer
+    # is what made this worth fixing rather than noting. A traceback out of the
+    # session-start read is the failure this file's own standard names most
+    # often: say which path, say why, and say which key chose it.
+    # (Codex, cross-model review.)
+    try:
+        text = spine_path().read_text(encoding="utf-8")
+    except OSError as e:
+        die('Could not read the spine at %s: %s\n("spine" in %s)'
+            % (spine_path(), e, config_path()))
     section, seen_sections = None, set()
-    for n, line in enumerate(spine_path().read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(text.splitlines(), 1):
         s = line.strip()
         if s.startswith(CONFLICT):
             problems.append("line %d: unresolved git conflict marker (%s)"
@@ -1274,7 +1299,14 @@ def cmd_draft(args):
     paths = journal_files(args[0])
     if not paths:
         die("No journal for %s." % args[0])
-    text = "\n\n".join(p.read_text(encoding="utf-8") for p in paths)
+    # The other site with the same shape: a name that EXISTS and cannot be
+    # read. Reached through the journal or archive directory rather than
+    # through a config key, so codex did not name it, but the property is one
+    # property and fixing the instance would buy exactly one round.
+    try:
+        text = "\n\n".join(p.read_text(encoding="utf-8") for p in paths)
+    except OSError as e:
+        die("Could not read the journal for %s: %s" % (args[0], e))
     heads = [ln.strip() for ln in text.splitlines()
              if ln.startswith("## ") or ln.startswith("### ")]
     print("=== %s (%s, %d words) ==="
@@ -2424,6 +2456,59 @@ def cmd_selftest(args):
               "and it is named, with the keys VardeMem does read")
     finally:
         shutil.rmtree(td, ignore_errors=True)
+
+    # A path that is a valid STRING and an unusable FILE. The config checks
+    # below cover malformed JSON and wrong types; this is the third shape, and
+    # it is the one that reached a traceback out of the session-start read
+    # rather than a message. Both verbs, because they read the spine by
+    # different routes. (Codex, cross-model review.)
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": "."}), encoding="utf-8")
+        (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
+        for verb, argv in (("read", ("read",)),
+                           ("put", ("put", "2026-03-04", "x"))):
+            rc, out = _run(jdir, *argv)
+            check(rc != 0 and "Traceback" not in out
+                  and "Could not read the spine" in out and CONFIG_NAME in out,
+                  "a spine naming a directory refuses `%s` without a traceback"
+                  % verb)
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The same class at the site codex did not name: a journal entry that
+    # exists and cannot be read.
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (jdir / "journal-2026-03-04.md").mkdir()
+        rc, out = _run(jdir, "draft", "2026-03-04")
+        check(rc != 0 and "Traceback" not in out
+              and "Could not read the journal" in out,
+              "a journal entry that is a directory refuses `draft` the same way")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # A journal OUTSIDE the root, named absolutely. This is a contract, not an
+    # accident: the root marker says which tree, it is not a sandbox, and a
+    # journal on another volume is a thing configuration may say. Pinned so
+    # that a later "harden the config" change has to argue with a test.
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    away = Path(tempfile.mkdtemp(prefix="vardemem-away-"))
+    try:
+        (away / "elsewhere").mkdir()
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": str(away / "elsewhere")}), encoding="utf-8")
+        (away / "elsewhere" / "journal-2026-03-04.md").write_text(
+            "# a day", encoding="utf-8")
+        rc, out = _run(jdir, "put", "2026-03-04", "recorded away")
+        landed = away / "elsewhere" / "SPINE.md"
+        check(rc == 0 and landed.is_file()
+              and "recorded away" in landed.read_text(encoding="utf-8"),
+              "an absolute journal path is honoured, root and all")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+        shutil.rmtree(away, ignore_errors=True)
 
     for label, text, want in (
             ("malformed JSON", "{not json", "valid JSON"),

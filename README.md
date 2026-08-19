@@ -48,6 +48,8 @@ A tree that VardeMem manages carries a `.vardemem.json` at its root. That file i
 
 There is no built-in default for `journal`: a journal layout is deployment knowledge, and this repository carries none of it.
 
+A value that is absolute, or that climbs out of its base with `..`, is honoured as written. The root marker answers "which tree am I talking to"; it is not a sandbox, and a journal on another volume is a thing configuration is allowed to say. The only writer of `.vardemem.json` is whoever owns the tree.
+
 ### How the root is found
 
 1. Walk up from the **current directory** for `.vardemem.json`. The first one found wins, and the directory holding it is the root.
