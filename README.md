@@ -48,7 +48,9 @@ A tree that VardeMem manages carries a `.vardemem.json` at its root. That file i
 
 There is no built-in default for `journal`: a journal layout is deployment knowledge, and this repository carries none of it.
 
-A value that is absolute, or that climbs out of its base with `..`, is honoured as written. The root marker answers "which tree am I talking to"; it is not a sandbox, and a journal on another volume is a thing configuration is allowed to say. The only writer of `.vardemem.json` is whoever owns the tree.
+Every value must name a path under its base. An absolute path, one with a `..` component, and one naming the base itself are all refused. For `journal` that is load-bearing: the wrong-tree warning below compares trees, and a journal that is not under its root makes that comparison meaningless. For `archive` and `spine` it is consistency. The check is lexical, so a symlink still escapes, and that is the supported way to put a journal outside its root: symlink it in. Two trees that symlink one shared journal are one journal, and the wrong-tree warning below knows it.
+
+Symlink the journal **directory**, never the `spine` file. The index is written by atomic replace, which swaps the link rather than writing through it, so a symlinked `spine` silently stops receiving days. Give a shared journal the same relative name in both trees as well: the index's own header line records the journal it was rebuilt from, so two names rewrite it at each other on alternating writes.
 
 ### How the root is found
 

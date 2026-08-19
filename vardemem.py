@@ -114,6 +114,8 @@ def _read_config(path):
     line to change has moved the problem rather than reported it."""
     try:
         text = path.read_text(encoding="utf-8")
+    except ValueError as e:
+        die("%s is not valid UTF-8: %s" % (path, e))
     except FileNotFoundError:
         die('No %s. Create it at the root of the tree that holds the '
             'journal:\n  {"journal": "<path to the journal, relative to %s>"}'
@@ -129,13 +131,8 @@ def _read_config(path):
             % (path, type(cfg).__name__))
     unknown = sorted(k for k in cfg if k not in CONFIG_KEYS)
     if unknown:
-        # Warn, never die. Naming the key is what catches the typo, and dying
-        # buys nothing on top of that while costing something real: the tool
-        # ships by clone, three tenants hold their own copies, and a key added
-        # to a config on one side would take `read` out entirely on every
-        # clone that had not caught up. "No read ever refuses" is this file's
-        # own loudest rule and a config key is not a data problem.
-        # (Adversarial review, round 1.)
+        # Warn, never die: the tool ships by clone, and a key added on one side
+        # would take `read` out on every clone that had not caught up.
         print("!! %s sets %s, which VardeMem does not read and will ignore. "
               "Known keys: %s."
               % (path, ", ".join('"%s"' % k for k in unknown),
@@ -144,59 +141,61 @@ def _read_config(path):
 
 
 def _warn_wrong_tree(root, rel):
-    """Warn when cwd sits inside a DIFFERENT tree carrying the same journal
-    layout as the one we resolved.
-
-    This is `warn_wrong_checkout` from the vault copy, with its one hardcoded
-    path replaced by the configured one. Nothing else about it changed, and
-    that is deliberate: it is the guard North paid for, and the extraction has
-    to carry it rather than approximate it.
-
-    A first attempt put the test inside the walk and keyed it on a `.git`
-    entry. That was wrong twice. It fired only when the WALK answered, so the
-    $AGENT_VAULT branch, which is the branch where the environment wins and
-    therefore the one the whole ordering exists to police, stayed silent: a
-    worktree outside the primary checkout, carrying no config, wrote its day
-    line into $AGENT_VAULT's tree at exit 0 with nothing printed. And keying on
-    `.git` asked the wrong question, warning when the caller merely stood in an
-    unrelated repository and staying quiet for a journal tree that is not a
-    checkout at all. The right question is the one the original asked: does the
-    directory I am standing in HOLD A JOURNAL of its own? Asking it here, after
-    the config is read, needs no knowledge of version control and covers both
-    answers. (Adversarial review, round 1.)"""
+    """Warn when cwd sits inside a DIFFERENT tree holding the same journal
+    layout. `warn_wrong_checkout` from the vault copy, with its one hardcoded
+    path parameterised. Runs on BOTH answers from _resolve_root, not just the
+    walk: the environment branch is the one the ordering exists to police. Do
+    not key this on a `.git` entry instead: that warns for an unrelated
+    repository and stays quiet for a journal tree that is not a checkout."""
     try:
         here = Path.cwd()
     except OSError:
         return
     for d in (here, *here.parents):
         if (d / rel).is_dir():
-            if d.resolve() != root.resolve():
-                print("!! Writing the journal under %s,\n!! but the current "
+            # Compare the JOURNALS, resolved, not the trees. Two trees that
+            # symlink one shared journal are not a wrong-tree case, and a
+            # symlink is the supported way to put a journal outside its root,
+            # so name-equality warned at exactly the deployment the containment
+            # rule pushes people toward. This is the discrimination test, not
+            # the containment test the thread rejected resolve() for. (North.)
+            if (d / rel).resolve() != (root / rel).resolve():
+                # The RESOLVED journal, not the root: a symlinked journal puts
+                # the write somewhere neither path names, and this warning
+                # then said the opposite of what happened.
+                print("!! Writing the journal at %s,\n!! but the current "
                       "directory is inside %s, which holds the same journal "
                       "layout and declares no %s.\n!! Writes land in the "
                       "FORMER. Add a %s to the latter if you meant it."
-                      % (root, d, CONFIG_NAME, CONFIG_NAME), file=sys.stderr)
+                      % ((root / rel).resolve(), d, CONFIG_NAME, CONFIG_NAME),
+                      file=sys.stderr)
             return
 
 
-def _cfg_path(path, key, value):
-    """One configured path, checked where it is READ. Path() accepts a number
-    or an empty string and turns it into a confusing failure much further
-    downstream, at a site with no idea a config file was involved.
+def _cfg_path(path, key, value, base):
+    """One configured path, checked where it is READ. Must stay under `base`.
 
-    A value that is ABSOLUTE, or that climbs out with `..`, is honoured. Path
-    joining does that on its own and it is left alone deliberately: the root
-    marker answers "which tree am I talking to", and it was never a sandbox.
-    The only writer of this file is whoever owns the tree, there is no
-    untrusted input anywhere in the path, and a journal on another volume is a
-    thing configuration is allowed to say. Rejecting it would break that case
-    to defend a boundary nothing else in this tool treats as one. Codex read
-    the same mechanism and graded it BLOCKING on the strength of the docs,
-    which said "relative to the root" and did not say what an absolute value
-    does; the docs were the incomplete half, so they say it now and a check
-    below pins it as a contract rather than an accident of pathlib."""
+    Load-bearing for `journal` only: _warn_wrong_tree compares TREES, and an
+    escaping journal makes every directory hold the layout, so the warning
+    fires from any cwd but the root. For `archive` and `spine` it is
+    consistency. The check is lexical; a symlink still escapes."""
     if not isinstance(value, str) or not value.strip():
         die('%s: "%s" must be a non-empty string, not %r.' % (path, key, value))
+    # A value JSON accepts that no syscall can take. Both known members raise
+    # ValueError, not OSError, so every guard at the read and write sites
+    # misses them: a NUL byte, and a lone surrogate, which fsencode refuses and
+    # fsencode is the only thing that will say so.
+    try:
+        os.fsencode(value)
+    except ValueError as e:
+        die('%s: "%s" cannot be used as a path: %s' % (path, key, e))
+    if "\0" in value:
+        die('%s: "%s" holds a NUL byte, which no path can contain.'
+            % (path, key))
+    p = Path(value)
+    if p.is_absolute() or ".." in p.parts or not p.parts:
+        die('%s: "%s" must name a path under its base (%s), not %r.'
+            % (path, key, base, value))
     return value
 
 
@@ -225,19 +224,20 @@ def _paths():
         if "journal" not in cfg:
             die('%s does not set "journal", so there is no journal to read.'
                 % conf)
-        rel = _cfg_path(conf, "journal", cfg["journal"])
+        rel = _cfg_path(conf, "journal", cfg["journal"], root)
         journal = root / rel
-        _warn_wrong_tree(root, rel)
-        # `archive` is optional and has NO default. A second directory of day
-        # files is a migration artifact, not something every tree has, and a
-        # default would invent one. `spine` does have a default: it names this
-        # tool's OWN output file, not the layout of somebody else's journal.
+        # `archive` has NO default: a second day-file directory is a migration
+        # artifact, and a default would invent one.
         _PATHS.update(
             config=conf, journal=journal, journal_rel=rel,
-            archive=(journal / _cfg_path(conf, "archive", cfg["archive"])
+            archive=(journal / _cfg_path(conf, "archive", cfg["archive"],
+                                        journal)
                      if "archive" in cfg else None),
             spine=journal / _cfg_path(conf, "spine",
-                                      cfg.get("spine", "SPINE.md")))
+                                      cfg.get("spine", "SPINE.md"), journal))
+        # After every value is checked, never between: it announces where
+        # writes go, and a later refusal makes that announcement a lie.
+        _warn_wrong_tree(root, rel)
     return _PATHS
 
 
@@ -517,17 +517,11 @@ def parse():
     days, rollups, problems, roll_bad = [], {}, [], []
     if not spine_path().exists():
         return days, rollups, problems, roll_bad
-    # EXISTING is not READABLE. The vault copy had the same unguarded read and
-    # the same crash, but reaching it needed someone to create a DIRECTORY
-    # named SPINE.md; a configured spine path reaches it with one character
-    # (`"spine": "."` resolves to the journal directory), so the config layer
-    # is what made this worth fixing rather than noting. A traceback out of the
-    # session-start read is the failure this file's own standard names most
-    # often: say which path, say why, and say which key chose it.
-    # (Codex, cross-model review.)
+    # EXISTING is not READABLE, whether because of its type or its bytes.
+    # Both arrive here as OSError or ValueError.
     try:
         text = spine_path().read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, ValueError) as e:
         die('Could not read the spine at %s: %s\n("spine" in %s)'
             % (spine_path(), e, config_path()))
     section, seen_sections = None, set()
@@ -829,7 +823,7 @@ def save(days, rollups):
     try:
         tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
         os.replace(tmp, spine_path())
-    except OSError as e:
+    except (OSError, ValueError) as e:
         # Remove the partial file on the way out. It is gitignored, so leaving
         # it made a failed write accumulate silently in the Journal rather than
         # show up as something to clean. (North, round 13.)
@@ -853,6 +847,11 @@ def key_of(days, lo, hi):
 
 
 def check(text):
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        die("That line is not UTF-8. The shell passed a byte that is not text, "
+            "so it cannot be written; retype the line.")
     text = " ".join(text.split())
     if not text:
         die("Empty. A spine line is one line of text.")
@@ -1299,13 +1298,10 @@ def cmd_draft(args):
     paths = journal_files(args[0])
     if not paths:
         die("No journal for %s." % args[0])
-    # The other site with the same shape: a name that EXISTS and cannot be
-    # read. Reached through the journal or archive directory rather than
-    # through a config key, so codex did not name it, but the property is one
-    # property and fixing the instance would buy exactly one round.
+    # Same shape, reached through the journal directory rather than a key.
     try:
         text = "\n\n".join(p.read_text(encoding="utf-8") for p in paths)
-    except OSError as e:
+    except (OSError, ValueError) as e:
         die("Could not read the journal for %s: %s" % (args[0], e))
     heads = [ln.strip() for ln in text.splitlines()
              if ln.startswith("## ") or ln.startswith("### ")]
@@ -2457,15 +2453,14 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # A path that is a valid STRING and an unusable FILE. The config checks
-    # below cover malformed JSON and wrong types; this is the third shape, and
-    # it is the one that reached a traceback out of the session-start read
-    # rather than a message. Both verbs, because they read the spine by
-    # different routes. (Codex, cross-model review.)
+    # A valid STRING naming a directory. Both verbs: they reach the spine by
+    # different routes.
     td, jdir, spine_md = _mkroot([], ndays=0)
     try:
         (Path(td) / CONFIG_NAME).write_text(
-            json.dumps({"journal": "history", "spine": "."}), encoding="utf-8")
+            json.dumps({"journal": "history", "spine": "adir"}),
+            encoding="utf-8")
+        (jdir / "adir").mkdir()
         (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
         for verb, argv in (("read", ("read",)),
                            ("put", ("put", "2026-03-04", "x"))):
@@ -2477,8 +2472,6 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # The same class at the site codex did not name: a journal entry that
-    # exists and cannot be read.
     td, jdir, spine_md = _mkroot([], ndays=0)
     try:
         (jdir / "journal-2026-03-04.md").mkdir()
@@ -2489,28 +2482,121 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # A journal OUTSIDE the root, named absolutely. This is a contract, not an
-    # accident: the root marker says which tree, it is not a sandbox, and a
-    # journal on another volume is a thing configuration may say. Pinned so
-    # that a later "harden the config" change has to argue with a test.
+    # The base differs per key, so the message has to name it. Checked on
+    # `spine`, whose base is the journal: naming the root instead would not
+    # put the journal path in the message.
     td, jdir, spine_md = _mkroot([], ndays=0)
-    away = Path(tempfile.mkdtemp(prefix="vardemem-away-"))
     try:
-        (away / "elsewhere").mkdir()
         (Path(td) / CONFIG_NAME).write_text(
-            json.dumps({"journal": str(away / "elsewhere")}), encoding="utf-8")
-        (away / "elsewhere" / "journal-2026-03-04.md").write_text(
-            "# a day", encoding="utf-8")
-        rc, out = _run(jdir, "put", "2026-03-04", "recorded away")
-        landed = away / "elsewhere" / "SPINE.md"
-        check(rc == 0 and landed.is_file()
-              and "recorded away" in landed.read_text(encoding="utf-8"),
-              "an absolute journal path is honoured, root and all")
+            json.dumps({"journal": "history", "spine": "/tmp/S.md"}),
+            encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and str(jdir) in out,
+              "the rejection names the base the key resolves against")
     finally:
         shutil.rmtree(td, ignore_errors=True)
-        shutil.rmtree(away, ignore_errors=True)
+
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": chr(0)}),
+            encoding="utf-8")
+        (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
+        rc, out = _run(jdir, "put", "2026-03-04", "x")
+        check(rc != 0 and "Traceback" not in out and "NUL byte" in out,
+              "a NUL byte in a path is refused, not raised out of the write")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": "S" + chr(0xd800)}),
+            encoding="utf-8")
+        (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
+        rc, out = _run(jdir, "put", "2026-03-04", "x")
+        check(rc != 0 and "Traceback" not in out
+              and "cannot be used as a path" in out,
+              "a lone surrogate is refused, not raised out of the write")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The warning names the RESOLVED journal, not the root. Only a symlinked
+    # journal separates the two: everywhere else the root is a textual prefix
+    # of the journal, so a substring check cannot tell the fix from the bug it
+    # replaced. (Mechanical lane found this unpinned.)
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    away = Path(tempfile.mkdtemp(prefix="vardemem-away-"))
+    elsewhere = Path(tempfile.mkdtemp(prefix="vardemem-other-"))
+    try:
+        real = away / "real"
+        real.mkdir()
+        shutil.rmtree(jdir)
+        (Path(td) / "history").symlink_to(real)
+        (elsewhere / "history").mkdir()
+        rc, out = _run(elsewhere, "read", root=td)
+        check(str(real.resolve()) in out,
+              "the wrong-tree warning names the journal it will actually write")
+    finally:
+        for d in (td, away, elsewhere):
+            shutil.rmtree(d, ignore_errors=True)
+
+    # CONTENT that is not UTF-8, at all three read sites and the write. The
+    # suite pinned the path-VALUE half of this class twice and none of the
+    # content half. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        (jdir / "journal-2026-01-01.md").write_text("# a day", encoding="utf-8")
+        spine_md.write_bytes(b"# Spine\n\n## Days\n\n2026-01-01 | \xff\n\n## Rollups\n")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and "Traceback" not in out and "Could not read" in out,
+              "a spine that is not UTF-8 refuses without a traceback")
+        (Path(td) / CONFIG_NAME).write_bytes(b'{"journal": "hist\xffory"}')
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and "Traceback" not in out and "not valid UTF-8" in out,
+              "a config that is not UTF-8 refuses without a traceback")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (jdir / "journal-2026-01-01.md").write_bytes(b"# day \xff\n")
+        rc, out = _run(jdir, "draft", "2026-01-01")
+        check(rc != 0 and "Traceback" not in out
+              and "Could not read the journal" in out,
+              "a journal file that is not UTF-8 refuses `draft` the same way")
+        # argv decodes with surrogateescape, so this is the reachable route.
+        rc, out = _run(jdir, "put", "2026-01-01", "note \udcff here")
+        left = [p.name for p in jdir.iterdir() if ".md.tmp" in p.name]
+        check(rc != 0 and "Traceback" not in out and "not UTF-8" in out
+              and not left,
+              "a day line that is not UTF-8 refuses, and leaves no temp file")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Two trees pointing at ONE journal are not a wrong tree. Name-equality
+    # said they were, and a symlink is the supported route to a journal
+    # outside its root, so this fired at the deployment the rules recommend.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    other = Path(tempfile.mkdtemp(prefix="vardemem-share-"))
+    try:
+        (other / "history").symlink_to(jdir)
+        rc, out = _run(other, "read", root=td)
+        check(rc == 0 and "Writes land in the FORMER" not in out,
+              "two trees sharing one journal by symlink draw no warning")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+        shutil.rmtree(other, ignore_errors=True)
 
     for label, text, want in (
+            ("an absolute path", '{"journal": "/tmp/elsewhere"}',
+             "under its base"),
+            ("an escaping path", '{"journal": "../elsewhere"}',
+             "under its base"),
+            ("a path naming its own base", '{"journal": "."}',
+             "under its base"),
+            ("an interior .. component", '{"journal": "a/../b"}',
+             "under its base"),
             ("malformed JSON", "{not json", "valid JSON"),
             ("a non-object", '["history"]', "JSON object"),
             ("a non-string path", '{"journal": 7}', '"journal"'),
