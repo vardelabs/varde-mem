@@ -171,6 +171,12 @@ def _cfg_path(path, key, value, base):
     The check is lexical; a symlink still escapes."""
     if not isinstance(value, str) or not value.strip():
         die('%s: "%s" must be a non-empty string, not %r.' % (path, key, value))
+    if "\0" in value:
+        # Survives .strip() and every test below, then raises ValueError out of
+        # open(), which the OSError guards at the read and write sites do not
+        # catch. (Codex, cross-model review.)
+        die('%s: "%s" holds a NUL byte, which no path can contain.'
+            % (path, key))
     p = Path(value)
     if p.is_absolute() or ".." in p.parts or not p.parts:
         die('%s: "%s" must name a path under its base (%s), not %r.'
@@ -2465,6 +2471,18 @@ def cmd_selftest(args):
         rc, out = _run(jdir, "read")
         check(rc != 0 and str(jdir) in out,
               "the rejection names the base the key resolves against")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": chr(0)}),
+            encoding="utf-8")
+        (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
+        rc, out = _run(jdir, "put", "2026-03-04", "x")
+        check(rc != 0 and "Traceback" not in out and "NUL byte" in out,
+              "a NUL byte in a path is refused, not raised out of the write")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
