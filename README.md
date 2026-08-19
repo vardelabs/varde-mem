@@ -56,6 +56,8 @@ There is no built-in default for `journal`: a journal layout is deployment knowl
 
 **The order is load-bearing.** `$AGENT_VAULT` names where a session started, which is not where the caller is working: one variable set to a primary checkout wrote a day line into the wrong tree from a worktree session, silently and at exit 0. The tree you are standing in knows which journal you mean. Because the config file is checked in, every worktree carries its own copy without anyone copying anything.
 
+Whichever of the two answers, VardeMem then warns on stderr if the current directory sits inside a **different** tree that holds the same journal layout and declares no config of its own. That is the case above: a checkout that says nothing is not a checkout that agrees with its neighbour. It warns and proceeds rather than refusing, because the read runs at session start and a refusal there turns "wrong tree, and you were told" into "no history at all".
+
 ## Install
 
 There is nothing to build. Clone the repository and run the file:

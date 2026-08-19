@@ -91,41 +91,16 @@ ROOT_ENV = "AGENT_VAULT"
 # only knows where a session started.
 def _resolve_root():
     """(root, config path). Dies when neither the walk nor the environment
-    answers.
-
-    The walk warns when it had to cross a CHECKOUT BOUNDARY to find the config,
-    because a tree that declares nothing is not the same as a tree that
-    declares its parent's layout. The vault this tool came from puts its
-    worktrees INSIDE the primary checkout, so a worktree with no config of its
-    own resolves to the primary one: the same wrong-tree write, arriving by a
-    different road. The warning is what `warn_wrong_checkout` used to do, and
-    it is more precise than that version could be, because the boundary is
-    visible here and `__file__` could not see it at all.
-
-    One filename is the whole of what this knows about version control. It is a
-    marker, not an integration: no subprocess, and a tree that is not a
-    checkout simply never sets `crossed`."""
+    answers. The warning that used to live here is in _warn_wrong_tree, which
+    runs on BOTH answers rather than on this one."""
     try:
         here = Path.cwd().resolve()
     except OSError:
         here = None                     # cwd deleted out from under us
     if here is not None:
-        crossed = None
         for d in (here, *here.parents):
             if (d / CONFIG_NAME).is_file():
-                if crossed is not None:
-                    print("!! Using the %s at %s,\n!! but the current "
-                          "directory is inside %s, a separate checkout that "
-                          "declares none.\n!! Writes land in the FORMER. Add "
-                          "a %s to the latter if you meant it."
-                          % (CONFIG_NAME, d, crossed, CONFIG_NAME),
-                          file=sys.stderr)
                 return d, d / CONFIG_NAME
-            # Checked AFTER the config, so a checkout that declares itself is
-            # never reported as one that was crossed. Only the FIRST boundary
-            # is kept: it is the one the caller is standing in.
-            if crossed is None and (d / ".git").exists():
-                crossed = d
     env = os.environ.get(ROOT_ENV)
     if env:
         return Path(env), Path(env) / CONFIG_NAME
@@ -154,10 +129,54 @@ def _read_config(path):
             % (path, type(cfg).__name__))
     unknown = sorted(k for k in cfg if k not in CONFIG_KEYS)
     if unknown:
-        die("%s sets %s, which VardeMem does not read. Known keys: %s."
-            % (path, ", ".join('"%s"' % k for k in unknown),
-               ", ".join('"%s"' % k for k in CONFIG_KEYS)))
+        # Warn, never die. Naming the key is what catches the typo, and dying
+        # buys nothing on top of that while costing something real: the tool
+        # ships by clone, three tenants hold their own copies, and a key added
+        # to a config on one side would take `read` out entirely on every
+        # clone that had not caught up. "No read ever refuses" is this file's
+        # own loudest rule and a config key is not a data problem.
+        # (Adversarial review, round 1.)
+        print("!! %s sets %s, which VardeMem does not read and will ignore. "
+              "Known keys: %s."
+              % (path, ", ".join('"%s"' % k for k in unknown),
+                 ", ".join('"%s"' % k for k in CONFIG_KEYS)), file=sys.stderr)
     return cfg
+
+
+def _warn_wrong_tree(root, rel):
+    """Warn when cwd sits inside a DIFFERENT tree carrying the same journal
+    layout as the one we resolved.
+
+    This is `warn_wrong_checkout` from the vault copy, with its one hardcoded
+    path replaced by the configured one. Nothing else about it changed, and
+    that is deliberate: it is the guard North paid for, and the extraction has
+    to carry it rather than approximate it.
+
+    A first attempt put the test inside the walk and keyed it on a `.git`
+    entry. That was wrong twice. It fired only when the WALK answered, so the
+    $AGENT_VAULT branch, which is the branch where the environment wins and
+    therefore the one the whole ordering exists to police, stayed silent: a
+    worktree outside the primary checkout, carrying no config, wrote its day
+    line into $AGENT_VAULT's tree at exit 0 with nothing printed. And keying on
+    `.git` asked the wrong question, warning when the caller merely stood in an
+    unrelated repository and staying quiet for a journal tree that is not a
+    checkout at all. The right question is the one the original asked: does the
+    directory I am standing in HOLD A JOURNAL of its own? Asking it here, after
+    the config is read, needs no knowledge of version control and covers both
+    answers. (Adversarial review, round 1.)"""
+    try:
+        here = Path.cwd()
+    except OSError:
+        return
+    for d in (here, *here.parents):
+        if (d / rel).is_dir():
+            if d.resolve() != root.resolve():
+                print("!! Writing the journal under %s,\n!! but the current "
+                      "directory is inside %s, which holds the same journal "
+                      "layout and declares no %s.\n!! Writes land in the "
+                      "FORMER. Add a %s to the latter if you meant it."
+                      % (root, d, CONFIG_NAME, CONFIG_NAME), file=sys.stderr)
+            return
 
 
 def _cfg_path(path, key, value):
@@ -196,6 +215,7 @@ def _paths():
                 % conf)
         rel = _cfg_path(conf, "journal", cfg["journal"])
         journal = root / rel
+        _warn_wrong_tree(root, rel)
         # `archive` is optional and has NO default. A second directory of day
         # files is a migration artifact, not something every tree has, and a
         # default would invent one. `spine` does have a default: it names this
@@ -2273,22 +2293,29 @@ def cmd_selftest(args):
         rc, out = _run(deep, "read")
         check(rc == 0 and "3 days" in out,
               "the config is found by walking up from a subdirectory")
-        check("separate checkout" not in out,
-              "and crossing no checkout boundary says nothing")
-        # A checkout that declares no config of its own. The walk still
-        # answers, from the tree above, and has to SAY so: this is the shape
-        # the vault produces, because it nests worktrees inside the primary
-        # checkout. A `.git` FILE, which is what a worktree has, not a
-        # directory.
+        check("Writes land in the FORMER" not in out,
+              "and standing inside the resolved tree says nothing")
+        # A tree holding a journal of its own and declaring no config. The
+        # walk still answers, from the tree above, and has to SAY so: this is
+        # the shape the vault produces, because it nests worktrees inside the
+        # primary checkout and a branch cut before the config existed carries
+        # none.
         inner = Path(td) / "inner"
-        inner.mkdir()
-        (inner / ".git").write_text("gitdir: /elsewhere\n", encoding="utf-8")
+        (inner / "history").mkdir(parents=True)
         rc, out = _run(inner, "read")
         check(rc == 0 and "3 days" in out,
-              "a checkout with no config still resolves, from the tree above")
-        check("separate checkout" in out and str(inner) in out
+              "a tree with a journal and no config still resolves, from above")
+        check("Writes land in the FORMER" in out and str(inner) in out
               and str(td) in out,
-              "and the crossing is named, with both trees")
+              "and the wrong-tree warning names both trees")
+        # Standing in a directory that holds NO journal is not a wrong tree,
+        # it is no tree, and there is nothing to compare. The vault copy was
+        # silent here too; matching it is the point.
+        plain = Path(td) / "plain"
+        plain.mkdir()
+        rc, out = _run(plain, "read")
+        check(rc == 0 and "Writes land in the FORMER" not in out,
+              "a directory with no journal of its own draws no warning")
         # Nothing above a throwaway tree carries a config, so this is the
         # fallback branch with nothing else to find.
         outside = Path(tempfile.mkdtemp(prefix="vardemem-outside-"))
@@ -2296,6 +2323,19 @@ def cmd_selftest(args):
             rc, out = _run(outside, "read", root=td)
             check(rc == 0 and "3 days" in out,
                   "$%s answers when the walk finds nothing" % ROOT_ENV)
+            # THE branch the ordering exists to police, and the one a first
+            # fix left silent. cwd holds a journal of its own and declares no
+            # config, so the environment wins; the caller has to be told, and
+            # the write still goes where discovery said, because warn-and-
+            # proceed is what the vault copy did.
+            (outside / "history").mkdir()
+            rc, out = _run(outside, "read", root=td)
+            check(rc == 0 and "Writes land in the FORMER" in out
+                  and str(outside) in out and str(td) in out,
+                  "the wrong-tree warning fires on the $%s branch too"
+                  % ROOT_ENV)
+            check("3 days" in out,
+                  "and it warns without refusing")
             rc, out = _run(outside, "read")
             check(rc != 0 and CONFIG_NAME in out and ROOT_ENV in out,
                   "with neither, the failure names the config file and $%s"
@@ -2323,10 +2363,23 @@ def cmd_selftest(args):
 
     td, jdir, spine_md = _mkroot([], ndays=0, archive=False)
     try:
-        (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
+        # A day file sitting at the CONVENTIONAL archive path, with no
+        # `archive` configured. Asserting only that nothing crashed passed
+        # against a build that silently defaults `archive` to `journal/archive`
+        # -- Path.glob() on a directory that does not exist returns empty
+        # rather than raising, so the exact regression _paths() forbids was
+        # invisible and the suite stayed 74/74 green. The name said "absent"
+        # and the assertion tested "did not crash". Assert that the file is
+        # NOT read. (Mechanical review, round 1.)
+        (jdir / "archive").mkdir()
+        (jdir / "archive" / "2026-03-04.md").write_text("# old",
+                                                        encoding="utf-8")
+        (jdir / "journal-2026-03-05.md").write_text("# a day", encoding="utf-8")
         rc, out = _run(jdir, "missing")
-        check(rc == 0 and "2026-03-04" in out,
+        check(rc == 0 and "2026-03-05" in out,
               "an unconfigured archive is absent, not a crash")
+        check("2026-03-04" not in out,
+              "and a day at the conventional archive path is not read")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
@@ -2359,11 +2412,22 @@ def cmd_selftest(args):
     # A broken config must name the file and the key. Silently continuing on
     # any of these picks a journal the caller did not ask for, which is the
     # whole failure mode the discovery order above exists to prevent.
+    td, jdir, spine_md = _mkroot([], ndays=3)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "jornal": "x"}),
+            encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == 0 and "3 days" in out,
+              "an unknown config key does not stop the read")
+        check(CONFIG_NAME in out and '"jornal"' in out and '"archive"' in out,
+              "and it is named, with the keys VardeMem does read")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
     for label, text, want in (
             ("malformed JSON", "{not json", "valid JSON"),
             ("a non-object", '["history"]', "JSON object"),
-            ("an unknown key", '{"journal": "history", "jornal": "x"}',
-             '"jornal"'),
             ("a non-string path", '{"journal": 7}', '"journal"'),
             ("no journal at all", '{"spine": "INDEX.md"}', '"journal"')):
         td, jdir, spine_md = _mkroot([], ndays=0)
