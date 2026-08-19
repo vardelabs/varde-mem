@@ -234,7 +234,8 @@ def _paths():
                                         journal)
                      if "archive" in cfg else None),
             spine=journal / _cfg_path(conf, "spine",
-                                      cfg.get("spine", "SPINE.md"), journal))
+                                      cfg.get("spine", "SPINE.md"), journal),
+            spine_set="spine" in cfg)
         # After every value is checked, never between: it announces where
         # writes go, and a later refusal makes that announcement a lie.
         _warn_wrong_tree(root, rel)
@@ -262,6 +263,11 @@ def archive_dir():
 
 def spine_path():
     return _paths()["spine"]
+
+
+def spine_configured():
+    """Whether the config named the spine, so a failure can say who chose it."""
+    return _paths()["spine_set"]
 
 
 BUDGET = 120       # lines a read may print
@@ -515,15 +521,19 @@ def parse():
     order check killed the session-start read with zero lines printed. Detect
     the markers by name so the diagnosis is the actual problem."""
     days, rollups, problems, roll_bad = [], {}, [], []
-    if not spine_path().exists():
-        return days, rollups, problems, roll_bad
-    # EXISTING is not READABLE, whether because of its type or its bytes.
-    # Both arrive here as OSError or ValueError.
+    # No `exists()` probe first: it stats, and stat raises PermissionError when
+    # the journal directory cannot be searched, which put the one shape this
+    # guard exists for outside the guard. Absent is the FileNotFoundError case;
+    # unreadable, by type or by bytes, is the one below it.
     try:
         text = spine_path().read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return days, rollups, problems, roll_bad
     except (OSError, ValueError) as e:
-        die('Could not read the spine at %s: %s\n("spine" in %s)'
-            % (spine_path(), e, config_path()))
+        die("Could not read the spine at %s: %s%s"
+            % (spine_path(), e,
+               '\n("spine" in %s)' % config_path() if spine_configured()
+               else "\n(the default name, under the configured journal)"))
     section, seen_sections = None, set()
     for n, line in enumerate(text.splitlines(), 1):
         s = line.strip()
@@ -2587,6 +2597,36 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
         shutil.rmtree(other, ignore_errors=True)
+
+    # An unreadable journal DIRECTORY. The exists() probe used to sit outside
+    # the guard and stat raised PermissionError there, so the one shape the
+    # guard exists for was the one it missed. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        os.chmod(jdir, 0o000)
+        rc, out = _run(jdir.parent, "read")
+        os.chmod(jdir, 0o755)
+        check(rc != 0 and "Traceback" not in out and "Could not read" in out,
+              "an unreadable journal directory refuses without a traceback")
+    finally:
+        os.chmod(jdir, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The failure named a "spine" key against configs that do not set one.
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        spine_md.write_bytes(b"# Spine\n\n## Days\n\n2026-01-01 | \xff\n")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and '"spine" in' not in out,
+              "an unset spine key is not named in the failure that mentions it")
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": "SPINE.md"}),
+            encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and '"spine" in' in out,
+              "and a set one is")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
 
     for label, text, want in (
             ("an absolute path", '{"journal": "/tmp/elsewhere"}',
