@@ -48,7 +48,7 @@ A tree that VardeMem manages carries a `.vardemem.json` at its root. That file i
 
 There is no built-in default for `journal`: a journal layout is deployment knowledge, and this repository carries none of it.
 
-Every value must name a path under its base. An absolute path, one containing `..` at all, and one naming the base itself are all refused: the wrong-tree warning below compares trees, and a journal that is not under its root makes that comparison meaningless. The check is lexical, so a symlink still escapes.
+Every value must name a path under its base. An absolute path, one with a `..` component, and one naming the base itself are all refused. For `journal` that is load-bearing: the wrong-tree warning below compares trees, and a journal that is not under its root makes that comparison meaningless. For `archive` and `spine` it is consistency. The check is lexical, so a symlink still escapes.
 
 ### How the root is found
 

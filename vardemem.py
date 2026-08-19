@@ -165,16 +165,23 @@ def _warn_wrong_tree(root, rel):
 
 
 def _cfg_path(path, key, value, base):
-    """One configured path, checked where it is READ. Must stay under `base`:
-    _warn_wrong_tree compares TREES, and an escaping journal makes every
-    directory hold the layout, so the warning fires from any cwd but the root.
-    The check is lexical; a symlink still escapes."""
+    """One configured path, checked where it is READ. Must stay under `base`.
+
+    Load-bearing for `journal` only: _warn_wrong_tree compares TREES, and an
+    escaping journal makes every directory hold the layout, so the warning
+    fires from any cwd but the root. For `archive` and `spine` it is
+    consistency. The check is lexical; a symlink still escapes."""
     if not isinstance(value, str) or not value.strip():
         die('%s: "%s" must be a non-empty string, not %r.' % (path, key, value))
+    # A value JSON accepts that no syscall can take. Both known members raise
+    # ValueError, not OSError, so every guard at the read and write sites
+    # misses them: a NUL byte, and a lone surrogate, which fsencode refuses and
+    # fsencode is the only thing that will say so.
+    try:
+        os.fsencode(value)
+    except ValueError as e:
+        die('%s: "%s" cannot be used as a path: %s' % (path, key, e))
     if "\0" in value:
-        # Survives .strip() and every test below, then raises ValueError out of
-        # open(), which the OSError guards at the read and write sites do not
-        # catch. (Codex, cross-model review.)
         die('%s: "%s" holds a NUL byte, which no path can contain.'
             % (path, key))
     p = Path(value)
@@ -211,7 +218,6 @@ def _paths():
                 % conf)
         rel = _cfg_path(conf, "journal", cfg["journal"], root)
         journal = root / rel
-        _warn_wrong_tree(root, rel)
         # `archive` has NO default: a second day-file directory is a migration
         # artifact, and a default would invent one.
         _PATHS.update(
@@ -221,6 +227,9 @@ def _paths():
                      if "archive" in cfg else None),
             spine=journal / _cfg_path(conf, "spine",
                                       cfg.get("spine", "SPINE.md"), journal))
+        # After every value is checked, never between: it announces where
+        # writes go, and a later refusal makes that announcement a lie.
+        _warn_wrong_tree(root, rel)
     return _PATHS
 
 
@@ -2486,12 +2495,47 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": "S" + chr(0xd800)}),
+            encoding="utf-8")
+        (jdir / "journal-2026-03-04.md").write_text("# a day", encoding="utf-8")
+        rc, out = _run(jdir, "put", "2026-03-04", "x")
+        check(rc != 0 and "Traceback" not in out
+              and "cannot be used as a path" in out,
+              "a lone surrogate is refused, not raised out of the write")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The warning names the RESOLVED journal, not the root. Only a symlinked
+    # journal separates the two: everywhere else the root is a textual prefix
+    # of the journal, so a substring check cannot tell the fix from the bug it
+    # replaced. (Mechanical lane found this unpinned.)
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    away = Path(tempfile.mkdtemp(prefix="vardemem-away-"))
+    elsewhere = Path(tempfile.mkdtemp(prefix="vardemem-other-"))
+    try:
+        real = away / "real"
+        real.mkdir()
+        shutil.rmtree(jdir)
+        (Path(td) / "history").symlink_to(real)
+        (elsewhere / "history").mkdir()
+        rc, out = _run(elsewhere, "read", root=td)
+        check(str(real.resolve()) in out,
+              "the wrong-tree warning names the journal it will actually write")
+    finally:
+        for d in (td, away, elsewhere):
+            shutil.rmtree(d, ignore_errors=True)
+
     for label, text, want in (
             ("an absolute path", '{"journal": "/tmp/elsewhere"}',
              "under its base"),
             ("an escaping path", '{"journal": "../elsewhere"}',
              "under its base"),
             ("a path naming its own base", '{"journal": "."}',
+             "under its base"),
+            ("an interior .. component", '{"journal": "a/../b"}',
              "under its base"),
             ("malformed JSON", "{not json", "valid JSON"),
             ("a non-object", '["history"]', "JSON object"),
