@@ -114,6 +114,8 @@ def _read_config(path):
     line to change has moved the problem rather than reported it."""
     try:
         text = path.read_text(encoding="utf-8")
+    except ValueError as e:
+        die("%s is not valid UTF-8: %s" % (path, e))
     except FileNotFoundError:
         die('No %s. Create it at the root of the tree that holds the '
             'journal:\n  {"journal": "<path to the journal, relative to %s>"}'
@@ -151,7 +153,13 @@ def _warn_wrong_tree(root, rel):
         return
     for d in (here, *here.parents):
         if (d / rel).is_dir():
-            if d.resolve() != root.resolve():
+            # Compare the JOURNALS, resolved, not the trees. Two trees that
+            # symlink one shared journal are not a wrong-tree case, and a
+            # symlink is the supported way to put a journal outside its root,
+            # so name-equality warned at exactly the deployment the containment
+            # rule pushes people toward. This is the discrimination test, not
+            # the containment test the thread rejected resolve() for. (North.)
+            if (d / rel).resolve() != (root / rel).resolve():
                 # The RESOLVED journal, not the root: a symlinked journal puts
                 # the write somewhere neither path names, and this warning
                 # then said the opposite of what happened.
@@ -509,11 +517,11 @@ def parse():
     days, rollups, problems, roll_bad = [], {}, [], []
     if not spine_path().exists():
         return days, rollups, problems, roll_bad
-    # EXISTING is not READABLE: `"spine"` naming a directory. The
-    # session-start read never tracebacks.
+    # EXISTING is not READABLE, whether because of its type or its bytes.
+    # Both arrive here as OSError or ValueError.
     try:
         text = spine_path().read_text(encoding="utf-8")
-    except OSError as e:
+    except (OSError, ValueError) as e:
         die('Could not read the spine at %s: %s\n("spine" in %s)'
             % (spine_path(), e, config_path()))
     section, seen_sections = None, set()
@@ -815,7 +823,7 @@ def save(days, rollups):
     try:
         tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
         os.replace(tmp, spine_path())
-    except OSError as e:
+    except (OSError, ValueError) as e:
         # Remove the partial file on the way out. It is gitignored, so leaving
         # it made a failed write accumulate silently in the Journal rather than
         # show up as something to clean. (North, round 13.)
@@ -839,6 +847,11 @@ def key_of(days, lo, hi):
 
 
 def check(text):
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        die("That line is not UTF-8. The shell passed a byte that is not text, "
+            "so it cannot be written; retype the line.")
     text = " ".join(text.split())
     if not text:
         die("Empty. A spine line is one line of text.")
@@ -1288,7 +1301,7 @@ def cmd_draft(args):
     # Same shape, reached through the journal directory rather than a key.
     try:
         text = "\n\n".join(p.read_text(encoding="utf-8") for p in paths)
-    except OSError as e:
+    except (OSError, ValueError) as e:
         die("Could not read the journal for %s: %s" % (args[0], e))
     heads = [ln.strip() for ln in text.splitlines()
              if ln.startswith("## ") or ln.startswith("### ")]
@@ -2527,6 +2540,53 @@ def cmd_selftest(args):
     finally:
         for d in (td, away, elsewhere):
             shutil.rmtree(d, ignore_errors=True)
+
+    # CONTENT that is not UTF-8, at all three read sites and the write. The
+    # suite pinned the path-VALUE half of this class twice and none of the
+    # content half. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        (jdir / "journal-2026-01-01.md").write_text("# a day", encoding="utf-8")
+        spine_md.write_bytes(b"# Spine\n\n## Days\n\n2026-01-01 | \xff\n\n## Rollups\n")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and "Traceback" not in out and "Could not read" in out,
+              "a spine that is not UTF-8 refuses without a traceback")
+        (Path(td) / CONFIG_NAME).write_bytes(b'{"journal": "hist\xffory"}')
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and "Traceback" not in out and "not valid UTF-8" in out,
+              "a config that is not UTF-8 refuses without a traceback")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (jdir / "journal-2026-01-01.md").write_bytes(b"# day \xff\n")
+        rc, out = _run(jdir, "draft", "2026-01-01")
+        check(rc != 0 and "Traceback" not in out
+              and "Could not read the journal" in out,
+              "a journal file that is not UTF-8 refuses `draft` the same way")
+        # argv decodes with surrogateescape, so this is the reachable route.
+        rc, out = _run(jdir, "put", "2026-01-01", "note \udcff here")
+        left = [p.name for p in jdir.iterdir() if ".md.tmp" in p.name]
+        check(rc != 0 and "Traceback" not in out and "not UTF-8" in out
+              and not left,
+              "a day line that is not UTF-8 refuses, and leaves no temp file")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Two trees pointing at ONE journal are not a wrong tree. Name-equality
+    # said they were, and a symlink is the supported route to a journal
+    # outside its root, so this fired at the deployment the rules recommend.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    other = Path(tempfile.mkdtemp(prefix="vardemem-share-"))
+    try:
+        (other / "history").symlink_to(jdir)
+        rc, out = _run(other, "read", root=td)
+        check(rc == 0 and "Writes land in the FORMER" not in out,
+              "two trees sharing one journal by symlink draw no warning")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+        shutil.rmtree(other, ignore_errors=True)
 
     for label, text, want in (
             ("an absolute path", '{"journal": "/tmp/elsewhere"}',
