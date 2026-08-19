@@ -152,24 +152,29 @@ def _warn_wrong_tree(root, rel):
     for d in (here, *here.parents):
         if (d / rel).is_dir():
             if d.resolve() != root.resolve():
-                print("!! Writing the journal under %s,\n!! but the current "
+                # The RESOLVED journal, not the root: a symlinked journal puts
+                # the write somewhere neither path names, and this warning
+                # then said the opposite of what happened.
+                print("!! Writing the journal at %s,\n!! but the current "
                       "directory is inside %s, which holds the same journal "
                       "layout and declares no %s.\n!! Writes land in the "
                       "FORMER. Add a %s to the latter if you meant it."
-                      % (root, d, CONFIG_NAME, CONFIG_NAME), file=sys.stderr)
+                      % ((root / rel).resolve(), d, CONFIG_NAME, CONFIG_NAME),
+                      file=sys.stderr)
             return
 
 
-def _cfg_path(path, key, value):
-    """One configured path, checked where it is READ. Must stay under its base:
-    _warn_wrong_tree compares TREES, and an absolute journal makes every
-    directory hold the layout, so the warning fires on every run."""
+def _cfg_path(path, key, value, base):
+    """One configured path, checked where it is READ. Must stay under `base`:
+    _warn_wrong_tree compares TREES, and an escaping journal makes every
+    directory hold the layout, so the warning fires from any cwd but the root.
+    The check is lexical; a symlink still escapes."""
     if not isinstance(value, str) or not value.strip():
         die('%s: "%s" must be a non-empty string, not %r.' % (path, key, value))
     p = Path(value)
     if p.is_absolute() or ".." in p.parts or not p.parts:
-        die('%s: "%s" must name a path under its base, not %r.'
-            % (path, key, value))
+        die('%s: "%s" must name a path under its base (%s), not %r.'
+            % (path, key, base, value))
     return value
 
 
@@ -198,17 +203,18 @@ def _paths():
         if "journal" not in cfg:
             die('%s does not set "journal", so there is no journal to read.'
                 % conf)
-        rel = _cfg_path(conf, "journal", cfg["journal"])
+        rel = _cfg_path(conf, "journal", cfg["journal"], root)
         journal = root / rel
         _warn_wrong_tree(root, rel)
         # `archive` has NO default: a second day-file directory is a migration
         # artifact, and a default would invent one.
         _PATHS.update(
             config=conf, journal=journal, journal_rel=rel,
-            archive=(journal / _cfg_path(conf, "archive", cfg["archive"])
+            archive=(journal / _cfg_path(conf, "archive", cfg["archive"],
+                                        journal)
                      if "archive" in cfg else None),
             spine=journal / _cfg_path(conf, "spine",
-                                      cfg.get("spine", "SPINE.md")))
+                                      cfg.get("spine", "SPINE.md"), journal))
     return _PATHS
 
 
@@ -488,8 +494,8 @@ def parse():
     days, rollups, problems, roll_bad = [], {}, [], []
     if not spine_path().exists():
         return days, rollups, problems, roll_bad
-    # EXISTING is not READABLE: `"spine": "."` resolves to the journal
-    # directory. The session-start read never tracebacks.
+    # EXISTING is not READABLE: `"spine"` naming a directory. The
+    # session-start read never tracebacks.
     try:
         text = spine_path().read_text(encoding="utf-8")
     except OSError as e:
@@ -2448,10 +2454,27 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
+    # The base differs per key, so the message has to name it. Checked on
+    # `spine`, whose base is the journal: naming the root instead would not
+    # put the journal path in the message.
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (Path(td) / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "spine": "/tmp/S.md"}),
+            encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and str(jdir) in out,
+              "the rejection names the base the key resolves against")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
     for label, text, want in (
-            ("an absolute path", '{"journal": "/tmp/elsewhere"}', "under its base"),
-            ("an escaping path", '{"journal": "../elsewhere"}', "under its base"),
-            ("a path naming its own base", '{"journal": "."}', "under its base"),
+            ("an absolute path", '{"journal": "/tmp/elsewhere"}',
+             "under its base"),
+            ("an escaping path", '{"journal": "../elsewhere"}',
+             "under its base"),
+            ("a path naming its own base", '{"journal": "."}',
+             "under its base"),
             ("malformed JSON", "{not json", "valid JSON"),
             ("a non-object", '["history"]', "JSON object"),
             ("a non-string path", '{"journal": 7}', '"journal"'),
