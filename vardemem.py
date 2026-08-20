@@ -55,9 +55,16 @@ except ImportError:  # Windows has no fcntl; the fleet is Linux and macOS
 from pathlib import Path
 
 
-def die(msg):
+# "There is no journal here" is not a failure, and a caller has to be able to
+# tell it from one. A session-start hook that cannot separate them either goes
+# quiet on real breakage or cries wolf in every tree that never had a spine.
+# 1 is any other refusal.
+EXIT_NO_JOURNAL = 3
+
+
+def die(msg, code=1):
     print(msg, file=sys.stderr)
-    sys.exit(1)
+    sys.exit(code)
 
 
 # The config file is the ROOT MARKER as well as the configuration: the
@@ -105,7 +112,8 @@ def _resolve_root():
     if env:
         return Path(env), Path(env) / CONFIG_NAME
     die("Cannot locate a journal: no %s in the current directory or any "
-        "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV))
+        "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV),
+        EXIT_NO_JOURNAL)
 
 
 def _read_config(path):
@@ -119,7 +127,7 @@ def _read_config(path):
     except FileNotFoundError:
         die('No %s. Create it at the root of the tree that holds the '
             'journal:\n  {"journal": "<path to the journal, relative to %s>"}'
-            % (path, path.parent))
+            % (path, path.parent), EXIT_NO_JOURNAL)
     except OSError as e:
         die("Could not read %s: %s" % (path, e))
     try:
@@ -223,7 +231,7 @@ def _paths():
         cfg = _read_config(conf)
         if "journal" not in cfg:
             die('%s does not set "journal", so there is no journal to read.'
-                % conf)
+                % conf, EXIT_NO_JOURNAL)
         rel = _cfg_path(conf, "journal", cfg["journal"], root)
         journal = root / rel
         # `archive` has NO default: a second day-file directory is a migration
@@ -2628,6 +2636,24 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
+    # "No journal here" gets its OWN exit code, so a caller can stay quiet for
+    # a tree that never had a spine and still be loud about a real failure.
+    # Everything else keeps exit 1.
+    outside = Path(tempfile.mkdtemp(prefix="vardemem-nojournal-"))
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        rc, out = _run(outside, "read")
+        check(rc == EXIT_NO_JOURNAL, "no journal anywhere exits EXIT_NO_JOURNAL")
+        (Path(td) / CONFIG_NAME).write_text('{"spine": "S.md"}', encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == EXIT_NO_JOURNAL, "a config with no journal key does too")
+        (Path(td) / CONFIG_NAME).write_text("{not json", encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == 1, "a malformed config is a real refusal, exit 1")
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
+
     for label, text, want in (
             ("an absolute path", '{"journal": "/tmp/elsewhere"}',
              "under its base"),
@@ -2693,7 +2719,7 @@ def _run():
         return COMMANDS["selftest"](sys.argv[2:])   # reads no journal file
     if not journal_dir().is_dir():
         die('No journal at %s ("journal" in %s).'
-            % (journal_dir(), config_path()))
+            % (journal_dir(), config_path()), EXIT_NO_JOURNAL)
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 
