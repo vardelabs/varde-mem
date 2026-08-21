@@ -47,6 +47,7 @@ import os
 import re
 import shlex
 import signal
+import stat as _stat
 import sys
 try:
     import fcntl
@@ -160,7 +161,15 @@ def _warn_wrong_tree(root, rel):
     except OSError:
         return
     for d in (here, *here.parents):
-        if (d / rel).is_dir():
+        # Unreachable is not a match, not a refusal: this walk is a heuristic
+        # over directories nobody named, including the configured journal
+        # itself when it is a symlink into an unreadable tree. Swallowing it
+        # here is safe because the caller that CAN refuse checks the same
+        # path again right after (_run's _dir_state guard); this is only
+        # reachable in the same shape North's #2 round-2 finding was, and my
+        # own new symlink check crashed here on 3.9-3.12 before that guard
+        # ever ran. (North, in effect.)
+        if _dir_state(d / rel)[0]:
             # Compare the JOURNALS, resolved, not the trees. Two trees that
             # symlink one shared journal are not a wrong-tree case, and a
             # symlink is the supported way to put a journal outside its root,
@@ -877,6 +886,20 @@ def check(text):
         die("Too long: %d chars, limit %d. Compress it further."
             % (len(text), LINE_CHARS))
     return text
+
+
+def _dir_state(p):
+    """(is_dir, unreachable_error). The error is the THIRD answer `is_dir()`
+    collapses: it returns False for an unreachable path from 3.13 on and raises
+    before it, so "not a directory" and "cannot be reached" arrive as one.
+    A caller that must refuse names the error; a caller that is only guessing
+    treats it as no match. (North.)"""
+    try:
+        return _stat.S_ISDIR(os.stat(p).st_mode), None
+    except (FileNotFoundError, NotADirectoryError):
+        return False, None
+    except OSError as e:
+        return False, e
 
 
 def _present(p):
@@ -2677,6 +2700,30 @@ def cmd_selftest(args):
         os.chmod(jdir, 0o755)
         shutil.rmtree(td, ignore_errors=True)
 
+    # A journal that cannot be REACHED must not answer EXIT_NO_JOURNAL: that is
+    # the code a session-start caller goes silent on, so it would hide an
+    # unreadable journal from every hook that keys on it. Reached through a
+    # symlinked journal, which _warn_wrong_tree documents as the supported way
+    # to put a journal outside its root. is_dir() collapsed this into "absent"
+    # from 3.13 on and raised before it. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    outer = Path(tempfile.mkdtemp(prefix="vardemem-outer-"))
+    try:
+        real = outer / "vault" / "history"
+        real.mkdir(parents=True)
+        shutil.copy(str(spine_md), str(real / "SPINE.md"))
+        shutil.rmtree(jdir)
+        jdir.symlink_to(real)
+        os.chmod(outer / "vault", 0o000)
+        rc, out = _run(Path(td), "read")
+        check(rc == 1 and "Traceback" not in out and "Could not reach" in out,
+              "a journal that cannot be reached refuses, and never as "
+              "EXIT_NO_JOURNAL")
+    finally:
+        os.chmod(outer / "vault", 0o755)
+        shutil.rmtree(outer, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
+
     # The same defect through the ARCHIVE, where it is worse: glob() swallows
     # the OSError, so an unsearchable archive reads as an empty one and
     # `missing` calls a day with a real archived journal behind it a
@@ -2719,6 +2766,16 @@ def cmd_selftest(args):
         (Path(td) / CONFIG_NAME).write_text("{not json", encoding="utf-8")
         rc, out = _run(jdir, "read")
         check(rc == 1, "a malformed config is a real refusal, exit 1")
+        # A config that cannot be READ is the same kind of answer as one that
+        # cannot be parsed. Widening that OSError to the quiet code had nothing
+        # to catch it. (North.)
+        cfg = Path(td) / CONFIG_NAME
+        cfg.write_text('{"journal": "history"}', encoding="utf-8")
+        os.chmod(cfg, 0o000)
+        rc, out = _run(jdir, "read")
+        os.chmod(cfg, 0o644)
+        check(rc == 1 and "Could not read" in out,
+              "an unreadable config is a real refusal too, not the quiet code")
     finally:
         shutil.rmtree(outside, ignore_errors=True)
         shutil.rmtree(td, ignore_errors=True)
@@ -2786,7 +2843,15 @@ def _run():
         sys.exit(1 if len(sys.argv) > 1 else 0)
     if sys.argv[1] == "selftest":
         return COMMANDS["selftest"](sys.argv[2:])   # reads no journal file
-    if not journal_dir().is_dir():
+    is_dir, unreachable = _dir_state(journal_dir())
+    if unreachable is not None:
+        # NOT the no-journal code. A journal that cannot be reached is a real
+        # failure, and EXIT_NO_JOURNAL is the code a session-start caller goes
+        # silent on, so answering it here hides an unreadable journal from
+        # every hook that keys on it. (North, #2 round 2.)
+        die("Could not reach the journal at %s: %s"
+            % (journal_dir(), unreachable))
+    if not is_dir:
         die('No journal at %s ("journal" in %s).'
             % (journal_dir(), config_path()), EXIT_NO_JOURNAL)
     COMMANDS[sys.argv[1]](sys.argv[2:])

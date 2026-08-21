@@ -99,14 +99,16 @@ ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
 | Code | Means |
 | --- | --- |
 | 0 | The command did what it says. |
-| 1 | A failure, named on stderr. |
-| 2 | Usage. |
-| 3 | There is no journal here: no config file up the tree, and `$AGENT_VAULT` unset or configless. |
+| 1 | A failure, named on stderr. Usage errors are exit 1 too; there is no separate usage code. |
+| 3 | There is no journal to read: no config found and `$AGENT_VAULT` unset, `$AGENT_VAULT` names a tree with no config, the config does not set `journal`, or it does and the named directory does not exist. |
+| 130 | Interrupted (Ctrl-C). |
 
 `3` exists so a caller that runs this at every session start can stay quiet in a
-tree that never had a journal, and stay loud about everything else. A caller that
-treats any non-zero code as "nothing to show" hides real failures; key the silence
-on `3` alone.
+tree that never had a journal, and stay loud about everything else. It means the
+journal genuinely is not there; a journal that IS configured but cannot be
+reached (permissions, a broken symlink) is exit 1, same as any other failure. A
+caller that treats any non-zero code as "nothing to show" hides those; key the
+silence on `3` alone.
 
 ## Provenance
 
