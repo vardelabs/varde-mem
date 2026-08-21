@@ -109,9 +109,14 @@ def _resolve_root():
         # NOT the same bucket as a deleted cwd: the directory is still there,
         # something about reaching it failed, and folding that into "no
         # journal here" is the identical trade this PR keeps refusing to make
-        # everywhere else. Reachable when cwd itself is unsearchable -- found
-        # while confirming North's round-3 door 2, which the walk loop below
-        # cannot see because this raises before the loop ever starts.
+        # everywhere else. Reachable when cwd itself is unsearchable, at least
+        # on macOS: found while confirming North's round-3 door 2, where this
+        # raised before the walk loop below ever started. getcwd() is more
+        # forgiving on Linux (it can answer from the kernel's already-open
+        # reference without a fresh permission check), so there the walk
+        # loop's own guard is what actually catches the same fixture -- this
+        # site is not provably reachable on every platform, but it costs
+        # nothing to guard and is correct wherever it does fire.
         die("Could not resolve the current directory: %s" % e)
     if here is not None:
         for d in (here, *here.parents):
@@ -2778,9 +2783,12 @@ def cmd_selftest(args):
     # Door 2 (North, round 3): the WALK that finds the config, not the journal
     # it points to, had the identical unreachable-folds-into-absent shape at
     # two sites. `Path.cwd().resolve()` itself raises when cwd cannot be
-    # reached, indistinguishable from "cwd was deleted" until this fix; and
-    # the walk's own per-ancestor probe silently continued on an unreachable
-    # config, misreporting "no journal anywhere" for a tree that had one.
+    # reached (on macOS at least; getcwd() is more forgiving on Linux, see
+    # _resolve_root), indistinguishable from "cwd was deleted" until this fix;
+    # and the walk's own per-ancestor probe silently continued on an
+    # unreachable config, misreporting "no journal anywhere" for a tree that
+    # had one. Whichever of the two actually fires on a given platform, both
+    # are guarded now, and the check below accepts either message.
     # _run() cannot build this fixture: it sets the CHILD's cwd via
     # subprocess's own `cwd=`, which is a fresh chdir() and needs search
     # permission on `blocked` at spawn time -- exactly what this fixture
@@ -2805,8 +2813,15 @@ def cmd_selftest(args):
         os.chdir(saved_cwd)
         os.chmod(blocked, 0o755)
         rc, out = p.returncode, p.stdout + p.stderr
+        # Which guard catches this is a platform detail, not the contract:
+        # Linux's getcwd() can answer from the kernel's already-open dentry
+        # without re-checking permission on the target, so Path.cwd().resolve()
+        # may not raise there the way it does on macOS, and the walk loop's own
+        # guard (independently pinned by the broken-symlink-config check above)
+        # catches it instead, under a different message. Either is a real
+        # refusal; only silently reporting no-journal-anywhere is wrong.
         check(rc == 1 and "Cannot locate a journal" not in out
-              and "Could not resolve" in out,
+              and ("Could not resolve" in out or "Could not check" in out),
               "a cwd that cannot itself be resolved refuses, rather than "
               "reporting no journal anywhere")
     finally:
