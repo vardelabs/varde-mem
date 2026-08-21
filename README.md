@@ -94,6 +94,20 @@ ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
 
 `selftest` is the safety net. It runs from any directory, touches no real journal, and builds its own throwaway trees.
 
+### Exit codes
+
+| Code | Means |
+| --- | --- |
+| 0 | The command did what it says. |
+| 1 | A failure, named on stderr. |
+| 2 | Usage. |
+| 3 | There is no journal here: no config file up the tree, and `$AGENT_VAULT` unset or configless. |
+
+`3` exists so a caller that runs this at every session start can stay quiet in a
+tree that never had a journal, and stay loud about everything else. A caller that
+treats any non-zero code as "nothing to show" hides real failures; key the silence
+on `3` alone.
+
 ## Provenance
 
 The decay idea comes from OptMem (`github.com/VictorTaelin/OptMem`): tile history with aligned power-of-two blocks whose detail thins with age, so a fixed line budget covers unbounded history. Credit for the technique is his.

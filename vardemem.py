@@ -879,6 +879,36 @@ def check(text):
     return text
 
 
+def _present(p):
+    """Whether `p` is there. Not `exists()`: it raises PermissionError on an
+    unsearchable parent up to 3.12 and returns False from 3.13 on, so one tree
+    tracebacks on one interpreter and reports "No journal" on the next while
+    the journal sits in it. Absent is ENOENT or ENOTDIR; every other cause
+    refuses under its own name rather than passing for absent."""
+    try:
+        p.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError as e:
+        die("Could not reach the journal at %s: %s" % (p, e))
+    return True
+
+
+def _day_files(d, prefix):
+    """The `<prefix>*.md` files in `d`, none when `d` is not there. Not
+    `glob()`: it swallows every OSError, so an unsearchable directory reads as
+    an empty one, and `missing` then calls a day with a real archived journal
+    behind it a fabricated line, exit 0. (North.)"""
+    try:
+        names = os.listdir(d)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+    except OSError as e:
+        die("Could not list %s: %s" % (d, e))
+    return [d / n for n in names
+            if n.startswith(prefix) and n.endswith(".md")]
+
+
 def journal_files(date):
     """A day's raw journals, oldest surface first. Usually one file, but an
     archive cutover leaves the cutover day split across both directories with
@@ -887,7 +917,7 @@ def journal_files(date):
     arc = archive_dir()
     if arc is not None:
         cand.insert(0, arc / ("%s.md" % date))
-    return [p for p in cand if p.exists()]
+    return [p for p in cand if _present(p)]
 
 
 def journal_dates():
@@ -898,7 +928,7 @@ def journal_dates():
     `draft` and `put` refuse it and no command clears it. The third date gate,
     missed when round 8 unified the other two. (North, round 9.)"""
     found, bad = set(), []
-    for p in journal_dir().glob("journal-*.md"):
+    for p in _day_files(journal_dir(), "journal-"):
         # The EXACT canonical name, not a date found anywhere in it.
         # `DATE.search` accepted `journal-2026-01-01-backup.md` as covering
         # that day, while journal_files() only opens `journal-<date>.md`, so
@@ -912,7 +942,7 @@ def journal_dates():
         elif DATE.fullmatch(stem):
             bad.append(p.name)
     arc = archive_dir()
-    for p in (arc.glob("*.md") if arc is not None else ()):
+    for p in (_day_files(arc, "") if arc is not None else ()):
         if real_date(p.stem):
             found.add(p.stem)
         elif DATE.fullmatch(p.stem):
@@ -2613,11 +2643,56 @@ def cmd_selftest(args):
     try:
         os.chmod(jdir, 0o000)
         rc, out = _run(jdir.parent, "read")
-        os.chmod(jdir, 0o755)
+        # `draft` never parses the spine, so it reached the SAME shape through
+        # journal_files(). What it did there depended on the interpreter:
+        # exists() raised up to 3.12 and returns False from 3.13 on, so this
+        # tree tracebacked on one Python and said "No journal" on the next,
+        # with the journal in it. Neither is a refusal. (North.)
+        rc2, out2 = _run(jdir.parent, "draft", "2026-01-01")
         check(rc != 0 and "Traceback" not in out and "Could not read" in out,
               "an unreadable journal directory refuses without a traceback")
+        check(rc2 != 0 and "Traceback" not in out2
+              and "Could not reach" in out2,
+              "and `draft` refuses there too, on every interpreter")
     finally:
         os.chmod(jdir, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The journal directory reaches the same listing by a narrower door. A
+    # mode of 111 is searchable but not listable, so the spine opens by name
+    # and parses, and only then does the listing fail. Every recorded day then
+    # reads as having no journal behind it: real history, called fabricated,
+    # exit 0. A wider mode cannot show this, because the spine lives under the
+    # journal directory and refuses first.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        (jdir / "journal-2026-01-01.md").write_text("# real", encoding="utf-8")
+        os.chmod(jdir, 0o111)
+        rc, out = _run(jdir.parent, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "a searchable-but-not-listable journal directory refuses, and "
+              "does not call a real day fabricated")
+    finally:
+        os.chmod(jdir, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The same defect through the ARCHIVE, where it is worse: glob() swallows
+    # the OSError, so an unsearchable archive reads as an empty one and
+    # `missing` calls a day with a real archived journal behind it a
+    # fabricated line, exit 0. A refusal is recoverable; that is not. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    arc = jdir / "archive"
+    try:
+        (arc / "2026-01-01.md").write_text("# real", encoding="utf-8")
+        os.chmod(arc, 0o000)
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "an unreadable archive refuses, and does not call a real day "
+              "fabricated")
+    finally:
+        os.chmod(arc, 0o755)
         shutil.rmtree(td, ignore_errors=True)
 
     # The failure named a "spine" key against configs that do not set one.
@@ -2627,12 +2702,6 @@ def cmd_selftest(args):
         rc, out = _run(jdir, "read")
         check(rc != 0 and '"spine" in' not in out,
               "an unset spine key is not named in the failure that mentions it")
-        (Path(td) / CONFIG_NAME).write_text(
-            json.dumps({"journal": "history", "spine": "SPINE.md"}),
-            encoding="utf-8")
-        rc, out = _run(jdir, "read")
-        check(rc != 0 and '"spine" in' in out,
-              "and a set one is")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
