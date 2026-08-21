@@ -103,12 +103,32 @@ def _resolve_root():
     runs on BOTH answers rather than on this one."""
     try:
         here = Path.cwd().resolve()
-    except OSError:
+    except FileNotFoundError:
         here = None                     # cwd deleted out from under us
+    except OSError as e:
+        # NOT the same bucket as a deleted cwd: the directory is still there,
+        # something about reaching it failed, and folding that into "no
+        # journal here" is the identical trade this PR keeps refusing to make
+        # everywhere else. Reachable when cwd itself is unsearchable -- found
+        # while confirming North's round-3 door 2, which the walk loop below
+        # cannot see because this raises before the loop ever starts.
+        die("Could not resolve the current directory: %s" % e)
     if here is not None:
         for d in (here, *here.parents):
-            if (d / CONFIG_NAME).is_file():
-                return d, d / CONFIG_NAME
+            cfg = d / CONFIG_NAME
+            is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
+            if unreachable is not None:
+                # NOT a silent "no config here, keep walking". This IS the
+                # resolution, not a heuristic like _warn_wrong_tree's walk: an
+                # ancestor we cannot check might be hiding the real config, and
+                # answering EXIT_NO_JOURNAL here would tell a caller keying its
+                # silence on that code that no journal is configured, when one
+                # may well be, just behind a directory we could not read.
+                # (North, round 3.)
+                die("Could not check %s for a journal config: %s"
+                    % (cfg, unreachable))
+            if is_file:
+                return d, cfg
     env = os.environ.get(ROOT_ENV)
     if env:
         return Path(env), Path(env) / CONFIG_NAME
@@ -888,18 +908,33 @@ def check(text):
     return text
 
 
+def _stat_state(p, istype):
+    """(matches_type, unreachable_error), shared by the dir and file probes.
+
+    ENOENT usually means "genuinely not there", so it is folded into `False,
+    None`, a plain non-match. Not when `p` is a symlink: then the LINK is
+    there and its TARGET is gone, which is the configured route breaking, not
+    the absence of one, and losing the target is exactly how the symlinked
+    journal `_warn_wrong_tree` documents as supported breaks. `islink` is a
+    plain `lstat` and cannot itself raise the way `stat` does, so it is safe
+    to call after `stat` already failed. (North.)"""
+    try:
+        return istype(os.stat(p).st_mode), None
+    except (FileNotFoundError, NotADirectoryError) as e:
+        if os.path.islink(p):
+            return False, e
+        return False, None
+    except OSError as e:
+        return False, e
+
+
 def _dir_state(p):
     """(is_dir, unreachable_error). The error is the THIRD answer `is_dir()`
     collapses: it returns False for an unreachable path from 3.13 on and raises
     before it, so "not a directory" and "cannot be reached" arrive as one.
     A caller that must refuse names the error; a caller that is only guessing
     treats it as no match. (North.)"""
-    try:
-        return _stat.S_ISDIR(os.stat(p).st_mode), None
-    except (FileNotFoundError, NotADirectoryError):
-        return False, None
-    except OSError as e:
-        return False, e
+    return _stat_state(p, _stat.S_ISDIR)
 
 
 def _present(p):
@@ -2722,6 +2757,73 @@ def cmd_selftest(args):
     finally:
         os.chmod(outer / "vault", 0o755)
         shutil.rmtree(outer, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Door 1 (North, round 3): a broken symlink is not the SAME unreachable
+    # case as a permission-blocked target above -- ENOENT on a symlink used to
+    # fold into "absent", answering EXIT_NO_JOURNAL for a journal that WAS
+    # configured, just pointing nowhere. `_warn_wrong_tree` documents a
+    # symlinked journal as supported; losing the target is how that breaks.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        shutil.rmtree(jdir)
+        jdir.symlink_to(Path(td) / "nowhere")
+        rc, out = _run(Path(td), "read")
+        check(rc == 1 and "Traceback" not in out and "Could not reach" in out,
+              "a journal symlinked to a target that is gone refuses, and "
+              "never as EXIT_NO_JOURNAL")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Door 2 (North, round 3): the WALK that finds the config, not the journal
+    # it points to, had the identical unreachable-folds-into-absent shape at
+    # two sites. `Path.cwd().resolve()` itself raises when cwd cannot be
+    # reached, indistinguishable from "cwd was deleted" until this fix; and
+    # the walk's own per-ancestor probe silently continued on an unreachable
+    # config, misreporting "no journal anywhere" for a tree that had one.
+    # _run() cannot build this fixture: it sets the CHILD's cwd via
+    # subprocess's own `cwd=`, which is a fresh chdir() and needs search
+    # permission on `blocked` at spawn time -- exactly what this fixture
+    # removes, so it would fail to spawn at all rather than exercise
+    # anything. Positioning the DRIVER there first and letting the child
+    # inherit cwd through fork (no second chdir) is the same mechanism a
+    # shell's `cd dir && chmod 000 dir && run` relies on, and is how this
+    # was found and confirmed against the real fixture, not simulation.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-doortwo-"))
+    saved_cwd = os.getcwd()
+    blocked = td / "blocked"
+    try:
+        blocked.mkdir()
+        (blocked / ".vardemem.json").write_text('{"journal": "j"}',
+                                                 encoding="utf-8")
+        os.chdir(blocked)
+        os.chmod(blocked, 0o000)
+        env = dict(os.environ)
+        env.pop(ROOT_ENV, None)
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True, env=env)
+        os.chdir(saved_cwd)
+        os.chmod(blocked, 0o755)
+        rc, out = p.returncode, p.stdout + p.stderr
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not resolve" in out,
+              "a cwd that cannot itself be resolved refuses, rather than "
+              "reporting no journal anywhere")
+    finally:
+        os.chdir(saved_cwd)
+        if blocked.is_dir():
+            os.chmod(blocked, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    td = Path(tempfile.mkdtemp(prefix="vardemem-doortwo-"))
+    try:
+        (td / ".vardemem.json").symlink_to(td / "nowhere.json")
+        rc, out = _run(td, "read")
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not check" in out,
+              "a config file symlinked to a target that is gone refuses "
+              "there, not three ancestors later claiming nothing was found")
+    finally:
         shutil.rmtree(td, ignore_errors=True)
 
     # The same defect through the ARCHIVE, where it is worse: glob() swallows
