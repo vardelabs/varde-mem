@@ -1026,12 +1026,15 @@ def _present(p):
     the journal sits in it. Absent is ENOENT or ENOTDIR; every other cause
     refuses under its own name rather than passing for absent.
 
-    Also refuses on a BROKEN `p`, same as `_day_files` right below: a
-    dangling day-file symlink made `os.listdir` (which lists the link name)
-    and this function (which follows it and fails) disagree about whether
-    the day "has a journal" -- `missing` named it forever, `draft`/`put`
-    refused it forever, and neither said why. (subagent, class-completion
-    sweep.)"""
+    Also refuses on a BROKEN `p`: a dangling day-file symlink made
+    `os.listdir` (which lists the link name) and this function (which
+    follows it and fails) disagree about whether the day "has a journal" --
+    `missing` named it forever, `draft`/`put` refused it forever, and
+    neither said why. (subagent, class-completion sweep.) `_day_files`
+    right below does NOT share this check on its own listing -- callers
+    that need it call this function themselves, per name, once they have
+    decided the name is worth the cost; see `journal_dates`. (Subagent,
+    round 6.)"""
     try:
         p.stat()
     except (FileNotFoundError, NotADirectoryError) as e:
@@ -1096,7 +1099,9 @@ def journal_files(date):
 
 
 def journal_dates():
-    """Every day that has a journal, oldest first.
+    """Every day that has a journal, oldest first. NOT a pure query: refuses
+    (process exit, not a return) the moment a real day file is unreachable,
+    same as `journal_files` does for a single date. (Subagent, round 6.)
 
     real_date, not the shape regex: a mistyped filename like
     journal-2026-02-30.md otherwise sticks in `missing` forever, because both
@@ -3202,6 +3207,12 @@ def cmd_selftest(args):
     # nothing to do with the journal, took `missing` down whole. Measured:
     # planting a dangling, non-date `.md` name in the archive turned exit 0
     # into exit 1 on a tree with no real day file affected at all.
+    # Positive, not just negative: rc == 0 and "Could not reach" absent is
+    # also what an archive nobody reads (or one _day_files silently emptied)
+    # would print. Three real archive days alongside the junk prove they were
+    # actually walked and counted, not that the walk was skipped. (Subagent,
+    # round 7: the first version of this case could not have told those
+    # apart.)
     td = Path(tempfile.mkdtemp(prefix="vardemem-archivejunk-"))
     try:
         jdir = td / "history"
@@ -3213,14 +3224,49 @@ def cmd_selftest(args):
             encoding="utf-8")
         (jdir / "SPINE.md").write_text("# Spine\n\n## Days\n\n## Rollups\n\n",
                                         encoding="utf-8")
+        for day in ("2026-01-02", "2026-01-03", "2026-01-04"):
+            (arc / ("%s.md" % day)).write_text("# day", encoding="utf-8")
         real = td / "real.md"
         real.write_text("x", encoding="utf-8")
         (arc / "README.md").symlink_to(real)
         real.unlink()
         rc, out = _run(jdir, "missing")
-        check(rc == 0 and "Could not reach" not in out,
+        check(rc == 0 and "Could not reach" not in out
+              and "3 day(s) with a journal and no spine line" in out,
               "a dangling .md name in the archive that was never a day "
               "file does not block missing over unrelated real days")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # 6a: the fix above threads _present through BOTH journal_dates loops,
+    # but every other dangling-day-file fixture in this file plants its link
+    # in the journal directory, never the archive. The archive loop's own
+    # _present call (the second of the two sites the fix touches) had no
+    # case of its own: deleting it left the suite green. A dangling REAL day
+    # in the archive is the identical disagreement the fixture above proves
+    # for the journal directory -- missing must refuse it exactly as draft
+    # does -- just through the archive's door instead. (Subagent, round 7.)
+    td = Path(tempfile.mkdtemp(prefix="vardemem-archivesymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        arc = jdir / "archive"
+        arc.mkdir()
+        (td / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "archive": "archive"}),
+            encoding="utf-8")
+        (jdir / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-01-01 | x\n\n## Rollups\n\n",
+            encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (arc / "2026-01-01.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "missing")
+        check(rc == 1 and "current" not in out
+              and "Could not reach" in out,
+              "missing refuses on a dangling day-file symlink in the "
+              "archive too, the same as one in the journal directory")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
