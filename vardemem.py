@@ -99,8 +99,12 @@ ROOT_ENV = "AGENT_VAULT"
 # only knows where a session started.
 def _resolve_root():
     """(root, config path). Dies when neither the walk nor the environment
-    answers. The warning that used to live here is in _warn_wrong_tree, which
-    runs on BOTH answers rather than on this one."""
+    answers -- OR when either one exists but cannot be checked (an unreadable
+    ancestor, a broken config symlink): fail-closed, because an answer we
+    cannot verify might be hiding the real one, and guessing past it is worse
+    than refusing. The warning that used to live here is in _warn_wrong_tree,
+    which runs after a clean answer from the walk or the environment, not on
+    a refusal from this one."""
     try:
         here = Path.cwd().resolve()
     except FileNotFoundError:
@@ -136,7 +140,17 @@ def _resolve_root():
                 return d, cfg
     env = os.environ.get(ROOT_ENV)
     if env:
-        return Path(env), Path(env) / CONFIG_NAME
+        cfg = Path(env) / CONFIG_NAME
+        # Same rigor as the walk above, and for the same reason: a config
+        # that IS there but broken (most likely a dangling symlink) is not
+        # the same answer as one that was never written, and folding it into
+        # EXIT_NO_JOURNAL would tell a caller keying its silence on that code
+        # that $AGENT_VAULT has no journal configured, when it has one that
+        # is misconfigured. (Vega.)
+        is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
+        if unreachable is not None:
+            die("Could not check %s for a journal config: %s" % (cfg, unreachable))
+        return Path(env), cfg
     die("Cannot locate a journal: no %s in the current directory or any "
         "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV),
         EXIT_NO_JOURNAL)
@@ -177,10 +191,13 @@ def _read_config(path):
 def _warn_wrong_tree(root, rel):
     """Warn when cwd sits inside a DIFFERENT tree holding the same journal
     layout. `warn_wrong_checkout` from the vault copy, with its one hardcoded
-    path parameterised. Runs on BOTH answers from _resolve_root, not just the
-    walk: the environment branch is the one the ordering exists to police. Do
-    not key this on a `.git` entry instead: that warns for an unrelated
-    repository and stays quiet for a journal tree that is not a checkout."""
+    path parameterised. Runs after either a walk answer or an environment
+    answer from _resolve_root, not just the walk: the environment branch is
+    the one the ordering exists to police. Never runs on a fail-closed
+    refusal (an unreadable ancestor, a broken config symlink) -- that has
+    already exited before this is reached. Do not key this on a `.git` entry
+    instead: that warns for an unrelated repository and stays quiet for a
+    journal tree that is not a checkout."""
     try:
         here = Path.cwd()
     except OSError:
@@ -913,20 +930,36 @@ def check(text):
     return text
 
 
+def _broken_ancestor(p):
+    """Whether some ancestor of `p`, not `p` itself, is a symlink whose
+    target is gone. `islink(p)` alone only ever inspects the FINAL
+    component, so a configured journal like "link/history" where "link"
+    dangles raises the identical FileNotFoundError as genuine absence and is
+    indistinguishable from it to a caller that only checks the leaf. Walk up
+    to the first ancestor that is actually there (lexists survives a
+    dangling symlink; stat/exists does not) and ask only whether THAT one is
+    a live symlink pointing at nothing. (Vega.)"""
+    for anc in p.parents:
+        if os.path.lexists(anc):
+            return os.path.islink(anc) and not os.path.exists(anc)
+    return False
+
+
 def _stat_state(p, istype):
     """(matches_type, unreachable_error), shared by the dir and file probes.
 
     ENOENT usually means "genuinely not there", so it is folded into `False,
-    None`, a plain non-match. Not when `p` is a symlink: then the LINK is
-    there and its TARGET is gone, which is the configured route breaking, not
-    the absence of one, and losing the target is exactly how the symlinked
-    journal `_warn_wrong_tree` documents as supported breaks. `islink` is a
-    plain `lstat` and cannot itself raise the way `stat` does, so it is safe
-    to call after `stat` already failed. (North.)"""
+    None`, a plain non-match. Not when `p` is a symlink, or sits behind one:
+    then something IS there and its TARGET is gone, which is the configured
+    route breaking, not the absence of one, and losing the target is exactly
+    how the symlinked journal `_warn_wrong_tree` documents as supported
+    breaks. `islink`/`lexists` are plain `lstat` and cannot themselves raise
+    the way `stat` does, so they are safe to call after `stat` already
+    failed. (North; ancestor case, Vega.)"""
     try:
         return istype(os.stat(p).st_mode), None
     except (FileNotFoundError, NotADirectoryError) as e:
-        if os.path.islink(p):
+        if os.path.islink(p) or _broken_ancestor(p):
             return False, e
         return False, None
     except OSError as e:
@@ -2838,6 +2871,45 @@ def cmd_selftest(args):
               and "Could not check" in out,
               "a config file symlinked to a target that is gone refuses "
               "there, not three ancestors later claiming nothing was found")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Vega's review of this PR: the walk's config probe goes through
+    # _stat_state (the check just above), but the $AGENT_VAULT fallback
+    # built its config path by hand and never ran it through anything --
+    # the identical broken-symlink-config case, reached through the OTHER
+    # of _resolve_root's two doors, folded into EXIT_NO_JOURNAL instead of
+    # refusing. cwd here is a plain empty tree so the walk finds nothing and
+    # falls through to the environment on its own.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-envdoor-"))
+    outside = Path(tempfile.mkdtemp(prefix="vardemem-envdoor-cwd-"))
+    try:
+        (td / CONFIG_NAME).symlink_to(td / "nowhere.json")
+        rc, out = _run(outside, "read", root=td)
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not check" in out,
+              "a config reached via $%s and symlinked to a target that is "
+              "gone refuses there too, not as EXIT_NO_JOURNAL" % ROOT_ENV)
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+        shutil.rmtree(outside, ignore_errors=True)
+
+    # Vega's review, second finding: islink(p) only ever inspects p's OWN
+    # final component. A journal configured as "link/history" where "link"
+    # itself dangles never gets that far -- stat() fails resolving THROUGH
+    # "link", and the leaf "history" was never a symlink at all -- so the
+    # old check missed it and this folded into "no journal" exactly like
+    # the direct case above.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-envdoor-"))
+    try:
+        (td / CONFIG_NAME).write_text('{"journal": "link/history"}',
+                                       encoding="utf-8")
+        (td / "link").symlink_to(td / "nowhere")
+        rc, out = _run(td, "read")
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not reach" in out,
+              "a journal path threaded through a dangling INTERMEDIATE "
+              "symlink refuses, not just one that is itself the symlink")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
