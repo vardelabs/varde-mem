@@ -106,7 +106,8 @@ ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
 `3` exists so a caller that runs this at every session start can stay quiet in a
 tree that never had a journal, and stay loud about everything else. It means the
 journal genuinely is not there; a journal that IS configured but cannot be
-reached (permissions, a broken symlink) is exit 1, same as any other failure. A
+reached (permissions, a broken symlink, a non-directory ancestor blocking the
+path) is exit 1, same as any other failure. A
 caller that treats any non-zero code as "nothing to show" hides those; key the
 silence on `3` alone.
 
