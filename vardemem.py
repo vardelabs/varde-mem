@@ -107,37 +107,45 @@ def _resolve_root():
     a refusal from this one."""
     try:
         here = Path.cwd().resolve()
-    except FileNotFoundError:
-        here = None                     # cwd deleted out from under us
+    except FileNotFoundError as e:
+        # The directory this process is standing in is GONE (a worktree
+        # `rm -rf`'d or `git worktree remove`'d out from under a live shell),
+        # not merely unreachable, and NOT the same bucket as "genuinely no
+        # config anywhere": there is no directory to start the walk from, so
+        # falling through to $AGENT_VAULT and possibly landing on the quiet
+        # code would tell a caller keying its silence on that code that no
+        # journal is configured, when the truth is the environment itself is
+        # broken. Refusing here also keeps the final die()'s message honest:
+        # without this, "no .vardemem.json in the current directory or any
+        # parent" would claim a walk that never ran. (Vega.)
+        die("The current directory no longer exists: %s" % e)
     except OSError as e:
-        # NOT the same bucket as a deleted cwd: the directory is still there,
-        # something about reaching it failed, and folding that into "no
-        # journal here" is the identical trade this PR keeps refusing to make
-        # everywhere else. Reachable when cwd itself is unsearchable, at least
-        # on macOS: found while confirming North's round-3 door 2, where this
-        # raised before the walk loop below ever started. getcwd() is more
-        # forgiving on Linux (it can answer from the kernel's already-open
-        # reference without a fresh permission check), so there the walk
-        # loop's own guard is what actually catches the same fixture -- this
-        # site is not provably reachable on every platform, but it costs
-        # nothing to guard and is correct wherever it does fire.
+        # Reachable when cwd itself is unsearchable, at least on macOS: found
+        # while confirming North's round-3 door 2, where this raised before
+        # the walk loop below ever started. getcwd() is more forgiving on
+        # Linux (it can answer from the kernel's already-open reference
+        # without a fresh permission check), so there the walk loop's own
+        # guard is what actually catches the same fixture -- this site is not
+        # provably reachable on every platform, but it costs nothing to guard
+        # and is correct wherever it does fire.
         die("Could not resolve the current directory: %s" % e)
-    if here is not None:
-        for d in (here, *here.parents):
-            cfg = d / CONFIG_NAME
-            is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
-            if unreachable is not None:
-                # NOT a silent "no config here, keep walking". This IS the
-                # resolution, not a heuristic like _warn_wrong_tree's walk: an
-                # ancestor we cannot check might be hiding the real config, and
-                # answering EXIT_NO_JOURNAL here would tell a caller keying its
-                # silence on that code that no journal is configured, when one
-                # may well be, just behind a directory we could not read.
-                # (North, round 3.)
-                die("Could not check %s for a journal config: %s"
-                    % (cfg, unreachable))
-            if is_file:
-                return d, cfg
+    # Both exception branches above die() (never return), so `here` is always
+    # a real, resolved Path from this point on -- no `is not None` guard needed.
+    for d in (here, *here.parents):
+        cfg = d / CONFIG_NAME
+        is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
+        if unreachable is not None:
+            # NOT a silent "no config here, keep walking". This IS the
+            # resolution, not a heuristic like _warn_wrong_tree's walk: an
+            # ancestor we cannot check might be hiding the real config, and
+            # answering EXIT_NO_JOURNAL here would tell a caller keying its
+            # silence on that code that no journal is configured, when one
+            # may well be, just behind a directory we could not read.
+            # (North, round 3.)
+            die("Could not check %s for a journal config: %s"
+                % (cfg, unreachable))
+        if is_file:
+            return d, cfg
     env = os.environ.get(ROOT_ENV)
     if env:
         cfg = Path(env) / CONFIG_NAME
@@ -147,7 +155,7 @@ def _resolve_root():
         # EXIT_NO_JOURNAL would tell a caller keying its silence on that code
         # that $AGENT_VAULT has no journal configured, when it has one that
         # is misconfigured. (Vega.)
-        is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
+        _, unreachable = _stat_state(cfg, _stat.S_ISREG)
         if unreachable is not None:
             die("Could not check %s for a journal config: %s" % (cfg, unreachable))
         return Path(env), cfg
@@ -584,13 +592,26 @@ def parse():
     # the journal directory cannot be searched, which put the one shape this
     # guard exists for outside the guard. Absent is the FileNotFoundError case;
     # unreadable, by type or by bytes, is the one below it.
+    sp = spine_path()
     try:
-        text = spine_path().read_text(encoding="utf-8")
-    except FileNotFoundError:
+        text = sp.read_text(encoding="utf-8")
+    except FileNotFoundError as e:
+        # A dangling symlink NAMED "spine" is discouraged (README) but a
+        # dangling component ABOVE it, e.g. "sub/SPINE.md" with "sub" itself
+        # a broken symlink, raises this identical error and is not: it is
+        # the spine's OWN journal-root config breaking, one level removed
+        # from the journal-directory case _stat_state already refuses on.
+        # Reading it as "no spine yet" degrades every command silently
+        # rather than naming the break. (Vega.)
+        if os.path.islink(sp) or _broken_ancestor(sp):
+            die("Could not read the spine at %s: %s%s"
+                % (sp, e,
+                   '\n("spine" in %s)' % config_path() if spine_configured()
+                   else "\n(the default name, under the configured journal)"))
         return days, rollups, problems, roll_bad
     except (OSError, ValueError) as e:
         die("Could not read the spine at %s: %s%s"
-            % (spine_path(), e,
+            % (sp, e,
                '\n("spine" in %s)' % config_path() if spine_configured()
                else "\n(the default name, under the configured journal)"))
     section, seen_sections = None, set()
@@ -994,10 +1015,19 @@ def _day_files(d, prefix):
     """The `<prefix>*.md` files in `d`, none when `d` is not there. Not
     `glob()`: it swallows every OSError, so an unsearchable directory reads as
     an empty one, and `missing` then calls a day with a real archived journal
-    behind it a fabricated line, exit 0. (North.)"""
+    behind it a fabricated line, exit 0. (North.)
+
+    Also refuses when `d` ITSELF is broken (a dangling symlink, or one
+    dangling further up), not only when it is unsearchable: an archive whose
+    symlink target moved looked identical to an archive that was genuinely
+    always empty, and `missing` reported the same fabricated-line harm this
+    function's own docstring already names for the unsearchable case, just
+    through the sibling door. (Vega.)"""
     try:
         names = os.listdir(d)
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError) as e:
+        if os.path.islink(d) or _broken_ancestor(d):
+            die("Could not list %s: %s" % (d, e))
         return []
     except OSError as e:
         die("Could not list %s: %s" % (d, e))
@@ -2863,6 +2893,35 @@ def cmd_selftest(args):
             os.chmod(blocked, 0o755)
         shutil.rmtree(td, ignore_errors=True)
 
+    # Sibling of the fixture above, deletion instead of permission: a shell
+    # left standing in a worktree that `git worktree remove` (or a plain
+    # `rm -rf`) just took out from under it. Same driver-first mechanism --
+    # chdir before removing, then spawn without a cwd= override so the child
+    # inherits via fork rather than a fresh chdir() into nothing. Before this
+    # fix, `except FileNotFoundError: here = None` fell through silently to
+    # $AGENT_VAULT and then to the walk's OWN "no journal anywhere" message,
+    # which is false here: no directory was ever actually checked. (Vega.)
+    td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-"))
+    saved_cwd = os.getcwd()
+    victim = td / "victim"
+    try:
+        victim.mkdir()
+        os.chdir(victim)
+        shutil.rmtree(victim)
+        env = dict(os.environ)
+        env.pop(ROOT_ENV, None)
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True, env=env)
+        os.chdir(saved_cwd)
+        rc, out = p.returncode, p.stdout + p.stderr
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "no longer exists" in out,
+              "a cwd deleted out from under the process refuses by name, "
+              "not as no-journal-anywhere")
+    finally:
+        os.chdir(saved_cwd)
+        shutil.rmtree(td, ignore_errors=True)
+
     td = Path(tempfile.mkdtemp(prefix="vardemem-doortwo-"))
     try:
         (td / ".vardemem.json").symlink_to(td / "nowhere.json")
@@ -2929,6 +2988,47 @@ def cmd_selftest(args):
               "fabricated")
     finally:
         os.chmod(arc, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The same defect through the ARCHIVE again, as a BROKEN SYMLINK rather
+    # than an unreadable directory: the archive volume unmounted, or its
+    # symlink target moved. _day_files folded the resulting FileNotFoundError
+    # into "empty" exactly like the unsearchable case just above did before
+    # North's fix, and a real archived day looked fabricated at exit 0
+    # instead of the archive itself refusing to be listed. (Vega.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    real_archive = Path(td) / "real-archive"
+    try:
+        arc = jdir / "archive"
+        shutil.copytree(arc, real_archive)
+        shutil.rmtree(arc)
+        arc.symlink_to(real_archive)
+        shutil.rmtree(real_archive)  # dangle it
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "a dangling archive symlink refuses, and does not call a "
+              "real day fabricated")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Same class again, through the SPINE path (MAJOR, not blocking: nothing
+    # is destroyed here, the spine is derived). {"spine": "sub/SPINE.md"} with
+    # "sub" a dangling symlink read as "the spine is empty" before this fix,
+    # degrading every command silently rather than naming the break. (Vega.)
+    td = Path(tempfile.mkdtemp(prefix="vardemem-spinesymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        (td / CONFIG_NAME).write_text(
+            '{"journal": "history", "spine": "sub/SPINE.md"}', encoding="utf-8")
+        (jdir / "sub").symlink_to(jdir / "nowhere")
+        rc, out = _run(jdir, "read")
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not read the spine" in out,
+              "a spine path threaded through a dangling intermediate "
+              "symlink refuses, not just reports an empty spine")
+    finally:
         shutil.rmtree(td, ignore_errors=True)
 
     # The failure named a "spine" key against configs that do not set one.
@@ -3054,8 +3154,14 @@ def cmd_selftest(args):
         "mod._run = lambda: (print('READY', flush=True), time.sleep(30))\n"
         "mod.main()\n"
     ) % __file__
-    p = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE,
-                          stderr=subprocess.PIPE, text=True)
+    # -B: SourceFileLoader compiles and caches bytecode on import like any
+    # other import, and the install this loads through is the operator's OWN
+    # ~/.local/bin, not this repo (whose checked-out copy .gitignore already
+    # covers). selftest should not leave a __pycache__ in a directory it does
+    # not own. (Vega.)
+    p = subprocess.Popen([sys.executable, "-B", "-c", driver],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True)
     ready = p.stdout.readline()
     p.send_signal(signal.SIGINT)
     try:
