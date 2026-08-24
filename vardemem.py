@@ -2952,6 +2952,32 @@ def cmd_selftest(args):
         (Path(td) / CONFIG_NAME).write_text('{"spine": "S.md"}', encoding="utf-8")
         rc, out = _run(jdir, "read")
         check(rc == EXIT_NO_JOURNAL, "a config with no journal key does too")
+        # Vega's review, coverage gap: $AGENT_VAULT unset (above) and
+        # $AGENT_VAULT pointing at a tree with no config of its own are
+        # different branches in _resolve_root -- the second still has to
+        # fall out through _read_config's own FileNotFoundError, which nothing
+        # here exercised, and is exactly the seam the env-fallback fix above
+        # lives next to.
+        vault_empty = Path(tempfile.mkdtemp(prefix="vardemem-vaultempty-"))
+        try:
+            rc, out = _run(outside, "read", root=vault_empty)
+            check(rc == EXIT_NO_JOURNAL,
+                  "$%s pointing to a tree with no config also exits "
+                  "EXIT_NO_JOURNAL" % ROOT_ENV)
+        finally:
+            shutil.rmtree(vault_empty, ignore_errors=True)
+        # And the other half: journal KEY present and valid, but the
+        # directory it names was simply never created -- no symlink, nothing
+        # blocking it, just absent. Must land on the same quiet code as
+        # above, and must NOT be conflated with the broken-route cases
+        # (permissions, dangling symlinks) exercised elsewhere, which are
+        # exit 1.
+        (Path(td) / CONFIG_NAME).write_text('{"journal": "nonexistent"}',
+                                             encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == EXIT_NO_JOURNAL,
+              "a configured journal directory that was never created also "
+              "exits EXIT_NO_JOURNAL")
         (Path(td) / CONFIG_NAME).write_text("{not json", encoding="utf-8")
         rc, out = _run(jdir, "read")
         check(rc == 1, "a malformed config is a real refusal, exit 1")
@@ -2990,6 +3016,43 @@ def cmd_selftest(args):
                   "%s is refused, naming the file and %s" % (label, want))
         finally:
             shutil.rmtree(td, ignore_errors=True)
+
+    # Vega's review, coverage gap: Ctrl-C during a real run must exit 130,
+    # and nothing proved it. Spawning `read` directly and racing a signal
+    # against it does not prove it either: a throwaway fixture finishes in a
+    # few milliseconds, so a signal sent right after spawn as often lands
+    # after exit as during the run, and check_reached above exists precisely
+    # because a probe that never reaches what it claims to test still shows
+    # green. Route the child through a real import instead of __main__ so
+    # the driver can swap in a version of _run that blocks on a genuinely
+    # interruptible call (time.sleep) and prints once it is inside main()'s
+    # try, giving the parent a synchronization point instead of a guess.
+    # runpy.run_path was tried first and does not work here: it returns a
+    # COPY of the exec'd namespace, so main.__globals__ stays wired to the
+    # internal dict runpy discards, and a rebind on the copy is invisible to
+    # main()'s own lookup of _run. A real module object keeps one dict for
+    # both, so the rebind and the lookup agree.
+    driver = (
+        "import importlib.util, time\n"
+        "spec = importlib.util.spec_from_file_location("
+        "'vardemem_sigint_driver', %r)\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "mod._run = lambda: (print('READY', flush=True), time.sleep(30))\n"
+        "mod.main()\n"
+    ) % __file__
+    p = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE,
+                          stderr=subprocess.PIPE, text=True)
+    ready = p.stdout.readline()
+    p.send_signal(signal.SIGINT)
+    try:
+        rc = p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+        rc = None
+    check(ready.strip() == "READY" and rc == 130,
+          "Ctrl-C during a run exits 130, not a bare traceback")
 
     print("\n%s" % ("ALL PASS" if not fails else "%d FAILED" % len(fails)))
     sys.exit(1 if fails else 0)
