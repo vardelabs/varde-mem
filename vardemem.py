@@ -2965,14 +2965,19 @@ def cmd_selftest(args):
     # A deleted cwd is NOT refused outright: $AGENT_VAULT is the documented
     # way to work OUTSIDE the walk-discoverable tree and answers fine
     # regardless of cwd's state. Only the row where $AGENT_VAULT ALSO does
-    # not answer must refuse, and even then through the ordinary
-    # EXIT_NO_JOURNAL path shared with every other no-journal-anywhere case,
-    # not a special-cased message. An earlier version of this fix refused
-    # before ever checking $AGENT_VAULT, which looked like the right
-    # instinct but broke the one row that matters (below); this exact test,
-    # unset-only, never caught that, because it never exercised that row.
-    # (North, round 5: found the regression, and named the blind spot in
-    # this fixture that let it ship.)
+    # not answer must refuse, through the same EXIT_NO_JOURNAL code shared
+    # with every other no-journal-anywhere case. An earlier version of this
+    # fix refused before ever checking $AGENT_VAULT, which looked like the
+    # right instinct but broke the one row that matters (below); this exact
+    # test, unset-only, never caught that, because it never exercised that
+    # row. (North, round 5: found the regression, and named the blind spot
+    # in this fixture that let it ship.)
+    #
+    # The MESSAGE, unlike the code, could not stay generic: this row first
+    # shipped hitting the walk's own "no journal in the current directory or
+    # any parent", which is false here specifically -- `here = None` skips
+    # the walk loop whole, so nothing was ever checked in any directory.
+    # (Subagent, round 6.)
     td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-"))
     saved_cwd = os.getcwd()
     victim = td / "victim"
@@ -2986,10 +2991,11 @@ def cmd_selftest(args):
                             capture_output=True, text=True, env=env)
         os.chdir(saved_cwd)
         rc, out = p.returncode, p.stdout + p.stderr
-        check(rc == EXIT_NO_JOURNAL,
+        check(rc == EXIT_NO_JOURNAL and "current directory or any parent"
+              not in out and "no longer exists" in out,
               "a cwd deleted out from under the process, with $%s also "
-              "unset, exits EXIT_NO_JOURNAL like any other no-journal-"
-              "anywhere case" % ROOT_ENV)
+              "unset, exits EXIT_NO_JOURNAL and says the cwd is gone, not "
+              "that a walk found nothing" % ROOT_ENV)
     finally:
         os.chdir(saved_cwd)
         shutil.rmtree(td, ignore_errors=True)
