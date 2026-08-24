@@ -815,7 +815,7 @@ def lock():
         # open() sat outside the try, so an unwritable Journal tracebacked past
         # the die() two lines below. This file's standard is that the
         # day-close hot path never tracebacks. (North, round 11.)
-        die("Could not lock %s: %s" % (spine_path().name, e))
+        die("Could not lock %s: %s" % (journal_dir() / ".spine.lock", e))
     _LOCK.append(f)
 
 
@@ -952,17 +952,23 @@ def check(text):
 
 
 def _broken_ancestor(p):
-    """Whether some ancestor of `p`, not `p` itself, is a symlink whose
-    target is gone. `islink(p)` alone only ever inspects the FINAL
-    component, so a configured journal like "link/history" where "link"
-    dangles raises the identical FileNotFoundError as genuine absence and is
+    """Whether some ancestor of `p`, not `p` itself, blocks reaching it: a
+    symlink whose target is gone, OR a plain file (or a live symlink to one)
+    sitting where a directory was expected. `islink(p)` alone only ever
+    inspects the FINAL component, so a configured journal like "link/history"
+    where "link" dangles, or "blocker/archive" where "blocker" is a regular
+    file left behind by a botched migration, raises the identical
+    FileNotFoundError/NotADirectoryError as genuine absence and is
     indistinguishable from it to a caller that only checks the leaf. Walk up
     to the first ancestor that is actually there (lexists survives a
-    dangling symlink; stat/exists does not) and ask only whether THAT one is
-    a live symlink pointing at nothing. (Vega.)"""
+    dangling symlink; stat/exists does not) and ask whether THAT one is
+    either a dead symlink or simply not a directory at all. (Vega; the
+    non-directory-ancestor half, class-completion sweep.)"""
     for anc in p.parents:
         if os.path.lexists(anc):
-            return os.path.islink(anc) and not os.path.exists(anc)
+            if os.path.islink(anc) and not os.path.exists(anc):
+                return True
+            return not anc.is_dir()
     return False
 
 
@@ -1001,10 +1007,19 @@ def _present(p):
     unsearchable parent up to 3.12 and returns False from 3.13 on, so one tree
     tracebacks on one interpreter and reports "No journal" on the next while
     the journal sits in it. Absent is ENOENT or ENOTDIR; every other cause
-    refuses under its own name rather than passing for absent."""
+    refuses under its own name rather than passing for absent.
+
+    Also refuses on a BROKEN `p`, same as `_day_files` right below: a
+    dangling day-file symlink made `os.listdir` (which lists the link name)
+    and this function (which follows it and fails) disagree about whether
+    the day "has a journal" -- `missing` named it forever, `draft`/`put`
+    refused it forever, and neither said why. (subagent, class-completion
+    sweep.)"""
     try:
         p.stat()
-    except (FileNotFoundError, NotADirectoryError):
+    except (FileNotFoundError, NotADirectoryError) as e:
+        if os.path.islink(p) or _broken_ancestor(p):
+            die("Could not reach the journal at %s: %s" % (p, e))
         return False
     except OSError as e:
         die("Could not reach the journal at %s: %s" % (p, e))
@@ -1017,16 +1032,20 @@ def _day_files(d, prefix):
     an empty one, and `missing` then calls a day with a real archived journal
     behind it a fabricated line, exit 0. (North.)
 
-    Also refuses when `d` ITSELF is broken (a dangling symlink, or one
-    dangling further up), not only when it is unsearchable: an archive whose
-    symlink target moved looked identical to an archive that was genuinely
-    always empty, and `missing` reported the same fabricated-line harm this
-    function's own docstring already names for the unsearchable case, just
-    through the sibling door. (Vega.)"""
+    Also refuses when `d` ITSELF is broken, not only when it is unsearchable:
+    a dangling symlink, one dangling further up, OR `d` existing as the wrong
+    TYPE (a plain file left behind by a botched migration that moved the real
+    archive aside). Any of the three looked identical to an archive that was
+    genuinely always empty, and `missing` reported the same fabricated-line
+    harm this function's own docstring already names for the unsearchable
+    case, just through a sibling door. `lexists` alone covers the dangling-
+    symlink-at-the-leaf case too now (a symlink always lexists, live or
+    dead), so it subsumes the old plain `islink` check. (Vega; the wrong-
+    type case, class-completion sweep.)"""
     try:
         names = os.listdir(d)
     except (FileNotFoundError, NotADirectoryError) as e:
-        if os.path.islink(d) or _broken_ancestor(d):
+        if os.path.lexists(d) or _broken_ancestor(d):
             die("Could not list %s: %s" % (d, e))
         return []
     except OSError as e:
@@ -3028,6 +3047,70 @@ def cmd_selftest(args):
               and "Could not read the spine" in out,
               "a spine path threaded through a dangling intermediate "
               "symlink refuses, not just reports an empty spine")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # subagent class-completion sweep: _present (used by journal_files, the
+    # read/write path for individual day files) never got the discrimination
+    # _day_files did. A dangling DAY-FILE symlink made journal_dates()
+    # (os.listdir, lists the link name) and journal_files() (_present,
+    # follows and fails) disagree: missing named the day forever, draft/put
+    # refused it forever, and neither said why.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-presentsymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        (td / CONFIG_NAME).write_text('{"journal": "history"}', encoding="utf-8")
+        (jdir / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n## Rollups\n\n", encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (jdir / "journal-2026-01-01.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "draft", "2026-01-01")
+        check(rc == 1 and "No journal for" not in out
+              and "Could not reach" in out,
+              "a dangling day-file symlink refuses by name, not as "
+              "'no journal for' a day that genuinely has one")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Same sweep, second finding: _day_files's NotADirectoryError branch only
+    # checked islink/_broken_ancestor, both of which fired only for the
+    # ENOENT shapes. An archive path that IS a regular file (a botched
+    # migration moved the real directory aside and left a file) triggered
+    # neither, fell through to "empty", and called a real archived day
+    # fabricated at exit 0.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        arc = jdir / "archive"
+        shutil.rmtree(arc)
+        arc.write_text("oops, a migration left this", encoding="utf-8")
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "an archive path that is a regular file refuses, and does "
+              "not call a real day fabricated")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Third shape of the same finding: the ANCESTOR of the archive path, not
+    # the leaf, is a plain regular file blocking traversal. _broken_ancestor
+    # originally checked only for a dangling SYMLINK ancestor; broadened to
+    # also catch a live non-directory ancestor, since NotADirectoryError
+    # cannot tell the two apart and neither can a caller reading exit 0.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        shutil.rmtree(jdir / "archive")
+        (jdir / "blocker").write_text("blocks traversal", encoding="utf-8")
+        (Path(td) / CONFIG_NAME).write_text(
+            '{"journal": "history", "archive": "blocker/archive"}',
+            encoding="utf-8")
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "an archive path blocked by a non-directory ancestor "
+              "refuses, and does not call a real day fabricated")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
