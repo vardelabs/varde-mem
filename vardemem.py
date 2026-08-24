@@ -107,18 +107,23 @@ def _resolve_root():
     a refusal from this one."""
     try:
         here = Path.cwd().resolve()
-    except FileNotFoundError as e:
+    except FileNotFoundError:
         # The directory this process is standing in is GONE (a worktree
-        # `rm -rf`'d or `git worktree remove`'d out from under a live shell),
-        # not merely unreachable, and NOT the same bucket as "genuinely no
-        # config anywhere": there is no directory to start the walk from, so
-        # falling through to $AGENT_VAULT and possibly landing on the quiet
-        # code would tell a caller keying its silence on that code that no
-        # journal is configured, when the truth is the environment itself is
-        # broken. Refusing here also keeps the final die()'s message honest:
-        # without this, "no .vardemem.json in the current directory or any
-        # parent" would claim a walk that never ran. (Vega.)
-        die("The current directory no longer exists: %s" % e)
+        # `rm -rf`'d or `git worktree remove`'d out from under a live shell).
+        # NOT refused here: $AGENT_VAULT is the documented way to work
+        # OUTSIDE the walk-discoverable tree, and a deleted cwd is simply
+        # irrelevant to answering from it -- a session-start hook that
+        # carries $AGENT_VAULT reads its journal exactly as if cwd were
+        # healthy. Dying before the fallback ever ran turned that working
+        # case into a failure: measured, exit 0 on `main`, exit 1 on an
+        # earlier version of this fix, for the one case that actually
+        # matters (env answers with a valid tree). The two rows where the
+        # env does NOT answer keep the honest "no longer exists" refusal
+        # below, just deferred to where it is still true. (North, round 5:
+        # the earlier refusal here was reachable, but the harm it was
+        # guarding against only exists in the row where the fallback DOES
+        # answer, and in that row there is nothing to hide.)
+        here = None
     except OSError as e:
         # Reachable when cwd itself is unsearchable, at least on macOS: found
         # while confirming North's round-3 door 2, where this raised before
@@ -129,23 +134,22 @@ def _resolve_root():
         # provably reachable on every platform, but it costs nothing to guard
         # and is correct wherever it does fire.
         die("Could not resolve the current directory: %s" % e)
-    # Both exception branches above die() (never return), so `here` is always
-    # a real, resolved Path from this point on -- no `is not None` guard needed.
-    for d in (here, *here.parents):
-        cfg = d / CONFIG_NAME
-        is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
-        if unreachable is not None:
-            # NOT a silent "no config here, keep walking". This IS the
-            # resolution, not a heuristic like _warn_wrong_tree's walk: an
-            # ancestor we cannot check might be hiding the real config, and
-            # answering EXIT_NO_JOURNAL here would tell a caller keying its
-            # silence on that code that no journal is configured, when one
-            # may well be, just behind a directory we could not read.
-            # (North, round 3.)
-            die("Could not check %s for a journal config: %s"
-                % (cfg, unreachable))
-        if is_file:
-            return d, cfg
+    if here is not None:
+        for d in (here, *here.parents):
+            cfg = d / CONFIG_NAME
+            is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
+            if unreachable is not None:
+                # NOT a silent "no config here, keep walking". This IS the
+                # resolution, not a heuristic like _warn_wrong_tree's walk: an
+                # ancestor we cannot check might be hiding the real config, and
+                # answering EXIT_NO_JOURNAL here would tell a caller keying its
+                # silence on that code that no journal is configured, when one
+                # may well be, just behind a directory we could not read.
+                # (North, round 3.)
+                die("Could not check %s for a journal config: %s"
+                    % (cfg, unreachable))
+            if is_file:
+                return d, cfg
     env = os.environ.get(ROOT_ENV)
     if env:
         cfg = Path(env) / CONFIG_NAME
@@ -1041,7 +1045,16 @@ def _day_files(d, prefix):
     case, just through a sibling door. `lexists` alone covers the dangling-
     symlink-at-the-leaf case too now (a symlink always lexists, live or
     dead), so it subsumes the old plain `islink` check. (Vega; the wrong-
-    type case, class-completion sweep.)"""
+    type case, class-completion sweep.)
+
+    Each individual NAME is also checked through `_present`, not just
+    listed: `os.listdir` names a dangling day-file symlink same as a live
+    one, so `journal_dates()` counted it as a day WITH a journal while
+    `journal_files()`/`_present` (the read/write path) refused it -- the
+    disagreement round 2c242e4's own message claimed was closed, actually
+    closed only on the write side. `missing` now refuses by name on the
+    same file `draft`/`put` already refuse on, rather than reporting
+    "current" over a link with nothing behind it. (North, round 5.)"""
     try:
         names = os.listdir(d)
     except (FileNotFoundError, NotADirectoryError) as e:
@@ -1051,7 +1064,7 @@ def _day_files(d, prefix):
     except OSError as e:
         die("Could not list %s: %s" % (d, e))
     return [d / n for n in names
-            if n.startswith(prefix) and n.endswith(".md")]
+            if n.startswith(prefix) and n.endswith(".md") and _present(d / n)]
 
 
 def journal_files(date):
@@ -2916,10 +2929,19 @@ def cmd_selftest(args):
     # left standing in a worktree that `git worktree remove` (or a plain
     # `rm -rf`) just took out from under it. Same driver-first mechanism --
     # chdir before removing, then spawn without a cwd= override so the child
-    # inherits via fork rather than a fresh chdir() into nothing. Before this
-    # fix, `except FileNotFoundError: here = None` fell through silently to
-    # $AGENT_VAULT and then to the walk's OWN "no journal anywhere" message,
-    # which is false here: no directory was ever actually checked. (Vega.)
+    # inherits via fork rather than a fresh chdir() into nothing.
+    #
+    # A deleted cwd is NOT refused outright: $AGENT_VAULT is the documented
+    # way to work OUTSIDE the walk-discoverable tree and answers fine
+    # regardless of cwd's state. Only the row where $AGENT_VAULT ALSO does
+    # not answer must refuse, and even then through the ordinary
+    # EXIT_NO_JOURNAL path shared with every other no-journal-anywhere case,
+    # not a special-cased message. An earlier version of this fix refused
+    # before ever checking $AGENT_VAULT, which looked like the right
+    # instinct but broke the one row that matters (below); this exact test,
+    # unset-only, never caught that, because it never exercised that row.
+    # (North, round 5: found the regression, and named the blind spot in
+    # this fixture that let it ship.)
     td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-"))
     saved_cwd = os.getcwd()
     victim = td / "victim"
@@ -2933,12 +2955,39 @@ def cmd_selftest(args):
                             capture_output=True, text=True, env=env)
         os.chdir(saved_cwd)
         rc, out = p.returncode, p.stdout + p.stderr
-        check(rc == 1 and "Cannot locate a journal" not in out
-              and "no longer exists" in out,
-              "a cwd deleted out from under the process refuses by name, "
-              "not as no-journal-anywhere")
+        check(rc == EXIT_NO_JOURNAL,
+              "a cwd deleted out from under the process, with $%s also "
+              "unset, exits EXIT_NO_JOURNAL like any other no-journal-"
+              "anywhere case" % ROOT_ENV)
     finally:
         os.chdir(saved_cwd)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # THE row that actually matters: a session-start hook always carries
+    # $AGENT_VAULT, so a deleted cwd must not stop it from answering when it
+    # names a perfectly good tree. Measured on `main`: exit 0. Measured on
+    # this PR before North's round-5 fix: exit 1, a regression the fixture
+    # above could not see.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-vault-"))
+    saved_cwd = os.getcwd()
+    victim = td / "victim"
+    vault_td, vault_jdir, vault_spine = _mkroot([], ndays=1)
+    try:
+        victim.mkdir()
+        os.chdir(victim)
+        shutil.rmtree(victim)
+        env = dict(os.environ)
+        env[ROOT_ENV] = str(vault_td)
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True, env=env)
+        os.chdir(saved_cwd)
+        rc, out = p.returncode, p.stdout + p.stderr
+        check(rc == 0 and "1 days" in out,
+              "a deleted cwd does not stop $%s from answering when it "
+              "names a valid tree" % ROOT_ENV)
+    finally:
+        os.chdir(saved_cwd)
+        shutil.rmtree(vault_td, ignore_errors=True)
         shutil.rmtree(td, ignore_errors=True)
 
     td = Path(tempfile.mkdtemp(prefix="vardemem-doortwo-"))
@@ -3072,6 +3121,33 @@ def cmd_selftest(args):
               and "Could not reach" in out,
               "a dangling day-file symlink refuses by name, not as "
               "'no journal for' a day that genuinely has one")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # North, round 5: the fix above closed the WRITE side (_present, via
+    # journal_files/draft/put), but _day_files -- the LISTING _run() itself
+    # feeds journal_dates(), which `missing` reads -- still named the link
+    # via bare os.listdir with no _present check of its own. `missing`
+    # reported the spine "current" over a day whose only journal file was
+    # this exact dangling link, the identical disagreement the commit two
+    # rounds ago claimed was closed, just seen from the other command.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-missingsymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        (td / CONFIG_NAME).write_text('{"journal": "history"}', encoding="utf-8")
+        (jdir / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-01-01 | x\n\n## Rollups\n\n",
+            encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (jdir / "journal-2026-01-01.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "missing")
+        check(rc == 1 and "current" not in out
+              and "Could not reach" in out,
+              "missing refuses on a dangling day-file symlink too, not "
+              "'current' over a link with nothing behind it")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
@@ -3222,7 +3298,7 @@ def cmd_selftest(args):
     # (`ln -s .../vardemem.py ~/.local/bin/vardemem`). Through that symlink the
     # extension-sniffing form returns spec=None, module_from_spec(None) raises,
     # and this check fails on every tool installed exactly as documented --
-    # while all 112 other checks pass through that same symlink, because they
+    # while every other check passes through that same symlink, because they
     # spawn __file__ as a subprocess argument, which needs no loader at all.
     # (North, round 4: caught on the installed path, not the direct one.)
     driver = (
