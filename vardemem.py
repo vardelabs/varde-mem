@@ -3032,10 +3032,23 @@ def cmd_selftest(args):
     # internal dict runpy discards, and a rebind on the copy is invisible to
     # main()'s own lookup of _run. A real module object keeps one dict for
     # both, so the rebind and the lookup agree.
+    #
+    # The loader must be passed explicitly, not left for spec_from_file_location
+    # to infer from the extension: __file__ is whatever path Python was invoked
+    # with, and the README's own documented install is an EXTENSIONLESS symlink
+    # (`ln -s .../vardemem.py ~/.local/bin/vardemem`). Through that symlink the
+    # extension-sniffing form returns spec=None, module_from_spec(None) raises,
+    # and this check fails on every tool installed exactly as documented --
+    # while all 112 other checks pass through that same symlink, because they
+    # spawn __file__ as a subprocess argument, which needs no loader at all.
+    # (North, round 4: caught on the installed path, not the direct one.)
     driver = (
-        "import importlib.util, time\n"
+        "import importlib.machinery, importlib.util, time\n"
+        "p = %r\n"
         "spec = importlib.util.spec_from_file_location("
-        "'vardemem_sigint_driver', %r)\n"
+        "'vardemem_sigint_driver', p,\n"
+        "    loader=importlib.machinery.SourceFileLoader("
+        "'vardemem_sigint_driver', p))\n"
         "mod = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(mod)\n"
         "mod._run = lambda: (print('READY', flush=True), time.sleep(30))\n"
