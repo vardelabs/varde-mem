@@ -109,24 +109,11 @@ def _resolve_root():
         here = Path.cwd().resolve()
     except FileNotFoundError:
         # The directory this process is standing in is GONE (a worktree
-        # `rm -rf`'d or `git worktree remove`'d out from under a live shell).
-        # NOT refused here: $AGENT_VAULT is the documented way to work
-        # OUTSIDE the walk-discoverable tree, and a deleted cwd is simply
-        # irrelevant to answering from it -- a session-start hook that
-        # carries $AGENT_VAULT reads its journal exactly as if cwd were
-        # healthy. Dying before the fallback ever ran turned that working
-        # case into a failure: measured, exit 0 on `main`, exit 1 on an
-        # earlier version of this fix, for the one case that actually
-        # matters (env answers with a valid tree). Only the row where
-        # $AGENT_VAULT is ALSO unset still has to refuse -- a set env either
-        # answers here or dies on its own broken-config message above this
-        # comment's reach -- and that refusal is named for what actually
-        # happened below, not folded into the walk's own message. (North,
-        # round 5: the earlier refusal here was reachable, but the harm it
-        # was guarding against only exists in the row where the fallback
-        # DOES answer, and in that row there is nothing to hide. Subagent,
-        # round 6: the deferred refusal this comment promised did not
-        # exist, and the walk's message claimed a walk that never ran.)
+        # removed out from under a live shell). NOT refused here:
+        # $AGENT_VAULT is the documented way to work outside the
+        # walk-discoverable tree, and answers fine regardless of cwd. Only a
+        # row where the env is also unset still refuses, below, named for
+        # what actually happened rather than folded into the walk's message.
         here = None
     except OSError as e:
         # Reachable when cwd itself is unsearchable, at least on macOS: found
@@ -170,9 +157,7 @@ def _resolve_root():
     if here is None:
         # The walk above never ran at all -- say so, rather than the message
         # below, which asserts a walk of "the current directory or any
-        # parent" that did not happen. (Subagent, round 6: this fired
-        # verbatim for a deleted cwd, telling a caller whose worktree is
-        # gone to create a config in a directory that no longer exists.)
+        # parent" that did not happen.
         die("Cannot locate a journal: the current directory no longer "
             "exists, so it could not be walked for %s, and $%s is unset."
             % (CONFIG_NAME, ROOT_ENV), EXIT_NO_JOURNAL)
@@ -1030,11 +1015,9 @@ def _present(p):
     `os.listdir` (which lists the link name) and this function (which
     follows it and fails) disagree about whether the day "has a journal" --
     `missing` named it forever, `draft`/`put` refused it forever, and
-    neither said why. (subagent, class-completion sweep.) `_day_files`
-    right below does NOT share this check on its own listing -- callers
-    that need it call this function themselves, per name, once they have
-    decided the name is worth the cost; see `journal_dates`. (Subagent,
-    round 6.)"""
+    neither said why. `_day_files` right below does NOT share this check on
+    its own listing -- a caller calls this per name, once it decides the
+    name is worth the cost; see `journal_dates`."""
     try:
         p.stat()
     except (FileNotFoundError, NotADirectoryError) as e:
@@ -1064,18 +1047,11 @@ def _day_files(d, prefix):
     type case, class-completion sweep.)
 
     Does NOT check each individual NAME through `_present` -- deliberately
-    not this function's job, even though a dangling day-file symlink is
-    exactly the kind of broken name this listing can return. The archive
-    call below passes prefix="", so every `.md` name in the directory
-    reaches here, including ones that were never going to be a journal day
-    at all (a stray README, migration leftovers); a caller that owns the
-    day-shape test already excludes those BEFORE deciding whether a real
-    day file's reachability is worth dying over. Checking presence here
-    made `missing` refuse entirely over an unrelated dangling file that a
-    correctly-typed listing was always going to ignore. (North, round 5,
-    then reverted, subagent round 6: same disagreement `journal_dates()`
-    vs. `journal_files()`/`_present` had before, but the fix belongs one
-    level up, gated on the day-shape test that already lives there.)"""
+    not this function's job. The archive call below passes prefix="", so
+    every `.md` name in the directory reaches here, including ones that
+    were never a journal day (a stray README, migration leftovers); a
+    caller that owns the day-shape test excludes those BEFORE deciding
+    whether a real day file's reachability is worth dying over."""
     try:
         names = os.listdir(d)
     except (FileNotFoundError, NotADirectoryError) as e:
@@ -1101,7 +1077,7 @@ def journal_files(date):
 def journal_dates():
     """Every day that has a journal, oldest first. NOT a pure query: refuses
     (process exit, not a return) the moment a real day file is unreachable,
-    same as `journal_files` does for a single date. (Subagent, round 6.)
+    same as `journal_files` does for a single date.
 
     real_date, not the shape regex: a mistyped filename like
     journal-2026-02-30.md otherwise sticks in `missing` forever, because both
@@ -1118,18 +1094,11 @@ def journal_dates():
         # (Codex, cross-model review, round 2.)
         stem = p.stem[len("journal-"):]
         if real_date(stem):
-            # Gated on real_date, not on _day_files's listing: this IS a day
-            # file, so a dangling name behind it is the disagreement with
-            # `draft`/`put` this function must not have. A `bad` name never
-            # reaches here, and neither does an unrelated `.md` name the
-            # archive call below would otherwise have swept in. `_present`
-            # dies on the first one it finds broken -- ONE dangling real day
-            # file refuses this whole call, hiding every other outstanding
-            # day behind it, same as every other refusal this function's
-            # doctrine prefers over a silent wrong answer. Reporting it
-            # alongside `bad` instead, so the rest of a run still gets
-            # through, is a real option; left as a design question, not
-            # decided here. (Subagent, round 6.)
+            # Gated on real_date: only a genuine day file pays for its own
+            # reachability. _present dies on the first one it finds broken,
+            # so one dangling real day hides every other outstanding day
+            # behind it -- reporting it alongside `bad` instead is an open
+            # question, not decided here.
             _present(p)
             found.add(stem)
         elif DATE.fullmatch(stem):
@@ -2971,18 +2940,10 @@ def cmd_selftest(args):
     # way to work OUTSIDE the walk-discoverable tree and answers fine
     # regardless of cwd's state. Only the row where $AGENT_VAULT ALSO does
     # not answer must refuse, through the same EXIT_NO_JOURNAL code shared
-    # with every other no-journal-anywhere case. An earlier version of this
-    # fix refused before ever checking $AGENT_VAULT, which looked like the
-    # right instinct but broke the one row that matters (below); this exact
-    # test, unset-only, never caught that, because it never exercised that
-    # row. (North, round 5: found the regression, and named the blind spot
-    # in this fixture that let it ship.)
-    #
-    # The MESSAGE, unlike the code, could not stay generic: this row first
-    # shipped hitting the walk's own "no journal in the current directory or
-    # any parent", which is false here specifically -- `here = None` skips
-    # the walk loop whole, so nothing was ever checked in any directory.
-    # (Subagent, round 6.)
+    # with every other no-journal-anywhere case -- and with an honest
+    # message: the walk's own "no journal in the current directory or any
+    # parent" is false here specifically, since `here = None` skips the walk
+    # loop whole and nothing was ever checked in any directory.
     td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-"))
     saved_cwd = os.getcwd()
     victim = td / "victim"
@@ -3005,11 +2966,9 @@ def cmd_selftest(args):
         os.chdir(saved_cwd)
         shutil.rmtree(td, ignore_errors=True)
 
-    # THE row that actually matters: a session-start hook always carries
+    # The row that actually matters: a session-start hook always carries
     # $AGENT_VAULT, so a deleted cwd must not stop it from answering when it
-    # names a perfectly good tree. Measured on `main`: exit 0. Measured on
-    # this PR before North's round-5 fix: exit 1, a regression the fixture
-    # above could not see.
+    # names a perfectly good tree.
     td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-vault-"))
     saved_cwd = os.getcwd()
     victim = td / "victim"
@@ -3166,19 +3125,10 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # North, round 5: the fix above closed the WRITE side (_present, via
-    # journal_files/draft/put), but _day_files -- the LISTING journal_dates()
-    # itself reads, which `missing` calls -- still named the link via bare
-    # os.listdir with no _present check of its own. `missing` reported the
-    # spine "current" over a day whose only journal file was this exact
-    # dangling link, the identical disagreement the commit two rounds ago
-    # claimed was closed, just seen from the other command. First landed as
-    # a blanket check inside _day_files itself; subagent round 6 found that
-    # version refused on ANY dangling .md name the archive's prefix=""
-    # listing returned, including ones that were never a day file at all
-    # (see the archive-junk case below) -- moved into journal_dates, gated
-    # on real_date, so only a name already decided to be a real day pays for
-    # its own reachability.
+    # The write side (_present, via journal_files/draft/put) refused a
+    # dangling day-file symlink; the listing side journal_dates() (which
+    # `missing` reads) did not, so `missing` reported the spine "current"
+    # over a day whose only journal file was this exact dangling link.
     td = Path(tempfile.mkdtemp(prefix="vardemem-missingsymlink-"))
     try:
         jdir = td / "history"
@@ -3199,20 +3149,11 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # Subagent, round 6: the fix above, in its first form, checked _present
-    # inside _day_files itself, before journal_dates ever applies its own
-    # day-shape test. The archive call passes prefix="", so EVERY `.md` name
-    # in the archive directory reached that check, not only real day files --
-    # a stray README or a migration leftover, dangling for reasons that have
-    # nothing to do with the journal, took `missing` down whole. Measured:
-    # planting a dangling, non-date `.md` name in the archive turned exit 0
-    # into exit 1 on a tree with no real day file affected at all.
-    # Positive, not just negative: rc == 0 and "Could not reach" absent is
-    # also what an archive nobody reads (or one _day_files silently emptied)
-    # would print. Three real archive days alongside the junk prove they were
-    # actually walked and counted, not that the walk was skipped. (Subagent,
-    # round 7: the first version of this case could not have told those
-    # apart.)
+    # The archive call passes prefix="", so a dangling non-date name (a
+    # stray README, migration leftovers) must not take `missing` down over
+    # files that were never a journal day. Positive, not just negative:
+    # three real archive days alongside the junk prove they were actually
+    # walked and counted, not that the archive went unread.
     td = Path(tempfile.mkdtemp(prefix="vardemem-archivejunk-"))
     try:
         jdir = td / "history"
@@ -3238,14 +3179,9 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # 6a: the fix above threads _present through BOTH journal_dates loops,
-    # but every other dangling-day-file fixture in this file plants its link
-    # in the journal directory, never the archive. The archive loop's own
-    # _present call (the second of the two sites the fix touches) had no
-    # case of its own: deleting it left the suite green. A dangling REAL day
-    # in the archive is the identical disagreement the fixture above proves
-    # for the journal directory -- missing must refuse it exactly as draft
-    # does -- just through the archive's door instead. (Subagent, round 7.)
+    # The journal-directory case above never exercises the archive loop's own
+    # _present call. A dangling REAL day in the archive is the same
+    # disagreement, just through the archive's door.
     td = Path(tempfile.mkdtemp(prefix="vardemem-archivesymlink-"))
     try:
         jdir = td / "history"
