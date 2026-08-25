@@ -157,10 +157,14 @@ def _resolve_root():
     if here is None:
         # The walk above never ran at all -- say so, rather than the message
         # below, which asserts a walk of "the current directory or any
-        # parent" that did not happen.
+        # parent" that did not happen. Exit 1, not EXIT_NO_JOURNAL: a deleted
+        # cwd is the strongest form of "cannot be checked", same reason the
+        # unreachable-ancestor branch above refuses loud rather than quiet --
+        # a config in a surviving parent of the deleted directory would be
+        # real and unreported.
         die("Cannot locate a journal: the current directory no longer "
             "exists, so it could not be walked for %s, and $%s is unset."
-            % (CONFIG_NAME, ROOT_ENV), EXIT_NO_JOURNAL)
+            % (CONFIG_NAME, ROOT_ENV))
     die("Cannot locate a journal: no %s in the current directory or any "
         "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV),
         EXIT_NO_JOURNAL)
@@ -2939,11 +2943,12 @@ def cmd_selftest(args):
     # A deleted cwd is NOT refused outright: $AGENT_VAULT is the documented
     # way to work OUTSIDE the walk-discoverable tree and answers fine
     # regardless of cwd's state. Only the row where $AGENT_VAULT ALSO does
-    # not answer must refuse, through the same EXIT_NO_JOURNAL code shared
-    # with every other no-journal-anywhere case -- and with an honest
-    # message: the walk's own "no journal in the current directory or any
-    # parent" is false here specifically, since `here = None` skips the walk
-    # loop whole and nothing was ever checked in any directory.
+    # not answer must refuse -- at exit 1, not EXIT_NO_JOURNAL: a deleted cwd
+    # is the strongest form of "cannot be checked" (every candidate
+    # directory at once), and a config in a surviving parent would be real
+    # and unreported if this stayed quiet. The message is honest too: the
+    # walk's own "no journal in the current directory or any parent" is
+    # false here specifically, since `here = None` skips the walk loop whole.
     td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-"))
     saved_cwd = os.getcwd()
     victim = td / "victim"
@@ -2957,11 +2962,11 @@ def cmd_selftest(args):
                             capture_output=True, text=True, env=env)
         os.chdir(saved_cwd)
         rc, out = p.returncode, p.stdout + p.stderr
-        check(rc == EXIT_NO_JOURNAL and "current directory or any parent"
+        check(rc == 1 and "current directory or any parent"
               not in out and "no longer exists" in out,
               "a cwd deleted out from under the process, with $%s also "
-              "unset, exits EXIT_NO_JOURNAL and says the cwd is gone, not "
-              "that a walk found nothing" % ROOT_ENV)
+              "unset, refuses at exit 1 (not the quiet EXIT_NO_JOURNAL) and "
+              "says the cwd is gone, not that a walk found nothing" % ROOT_ENV)
     finally:
         os.chdir(saved_cwd)
         shutil.rmtree(td, ignore_errors=True)
