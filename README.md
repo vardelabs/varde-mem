@@ -108,8 +108,11 @@ tree that never had a journal, and stay loud about everything else. It means a
 real check ran and the journal genuinely is not there; anything that could not
 be checked at all -- a journal that IS configured but cannot be reached
 (permissions, a broken symlink, a non-directory ancestor blocking the path), or
-a current directory that no longer exists, so the walk itself never ran -- is
-exit 1, same as any other failure. A caller that treats any non-zero code as
+a current directory that no longer exists WITH `$AGENT_VAULT` also unset, so
+nothing was checked anywhere -- is exit 1, same as any other failure. A deleted
+current directory alone does not force exit 1: `$AGENT_VAULT`, when set,
+answers on its own merits regardless of cwd, so it still returns 0 or 3 exactly
+as it would from a healthy cwd. A caller that treats any non-zero code as
 "nothing to show" hides those; key the silence on `3` alone.
 
 The stderr promise on `1` is for the tool's own failures. `selftest` is a report
