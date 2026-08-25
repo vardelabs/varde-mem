@@ -104,7 +104,13 @@ def _resolve_root():
     cannot verify might be hiding the real one, and guessing past it is worse
     than refusing. The warning that used to live here is in _warn_wrong_tree,
     which runs after a clean answer from the walk or the environment, not on
-    a refusal from this one."""
+    a refusal from this one.
+
+    $AGENT_VAULT, once set, answers on its OWN merits, independent of cwd's
+    state: a set env either finds a config, finds none, or is itself
+    unreachable, and any of those is a complete answer. Cwd only matters when
+    it is the ONLY source left to ask -- an unset env is what makes "the walk
+    never ran" load-bearing enough to refuse loud rather than quiet."""
     try:
         here = Path.cwd().resolve()
     except FileNotFoundError:
@@ -2962,11 +2968,12 @@ def cmd_selftest(args):
                             capture_output=True, text=True, env=env)
         os.chdir(saved_cwd)
         rc, out = p.returncode, p.stdout + p.stderr
-        check(rc == 1 and "current directory or any parent"
-              not in out and "no longer exists" in out,
+        check(rc == 1 and "Traceback" not in out and "current directory or "
+              "any parent" not in out and "no longer exists" in out,
               "a cwd deleted out from under the process, with $%s also "
-              "unset, refuses at exit 1 (not the quiet EXIT_NO_JOURNAL) and "
-              "says the cwd is gone, not that a walk found nothing" % ROOT_ENV)
+              "unset, refuses at exit 1 (not the quiet EXIT_NO_JOURNAL, and "
+              "not a crash) and says the cwd is gone, not that a walk found "
+              "nothing" % ROOT_ENV)
     finally:
         os.chdir(saved_cwd)
         shutil.rmtree(td, ignore_errors=True)

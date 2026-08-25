@@ -54,9 +54,9 @@ Symlink the journal **directory**, never the `spine` file. The index is written 
 
 ### How the root is found
 
-1. Walk up from the **current directory** for `.vardemem.json`. The first one found wins, and the directory holding it is the root. An ancestor along that walk that cannot even be checked (permissions, a broken symlink) stops the walk and refuses right there instead of falling through to step 2: it might be hiding the real config, and guessing past it is worse than refusing.
-2. Only if the walk reaches the top cleanly, finding nothing at any checkable step, read **`$AGENT_VAULT`** and look for the config at its root. The same rule applies here too: a config that exists but cannot be checked refuses rather than reporting no journal.
-3. Otherwise (neither found, and both were checkable) refuse, naming both.
+1. Walk up from the **current directory** for `.vardemem.json`. The first one found wins, and the directory holding it is the root. An ancestor along that walk that cannot even be checked (permissions, a broken symlink) stops the walk and refuses right there instead of falling through to step 2: it might be hiding the real config, and guessing past it is worse than refusing. A current directory that no longer exists (a worktree removed out from under a live shell) skips this step entirely rather than refusing here: there is nothing to walk from, which is not the same as walking and finding nothing.
+2. If step 1 found nothing checkable, or never ran, read **`$AGENT_VAULT`** and look for the config at its root. The same rule applies here too: a config that exists but cannot be checked refuses rather than reporting no journal.
+3. Otherwise refuse. A deleted current directory says so by name; every other case names both places checked.
 
 **The order is load-bearing.** `$AGENT_VAULT` names where a session started, which is not where the caller is working: one variable set to a primary checkout wrote a day line into the wrong tree from a worktree session, silently and at exit 0. The tree you are standing in knows which journal you mean. Because the config file is checked in, every worktree carries its own copy without anyone copying anything.
 
@@ -100,16 +100,17 @@ ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
 | --- | --- |
 | 0 | The command did what it says. |
 | 1 | A failure, named on stderr. Usage errors are exit 1 too; there is no separate usage code. |
-| 3 | There is no journal to read: no config found and `$AGENT_VAULT` unset, `$AGENT_VAULT` names a tree with no config, the config does not set `journal`, or it does and the named path is absent or is not a directory. |
+| 3 | There is no journal to read: the walk from the current directory completed with no config found and `$AGENT_VAULT` unset, `$AGENT_VAULT` names a tree with no config, the config does not set `journal`, or it does and the named path is absent or is not a directory. |
 | 130 | Interrupted (Ctrl-C). |
 
 `3` exists so a caller that runs this at every session start can stay quiet in a
-tree that never had a journal, and stay loud about everything else. It means the
-journal genuinely is not there; a journal that IS configured but cannot be
-reached (permissions, a broken symlink, a non-directory ancestor blocking the
-path) is exit 1, same as any other failure. A
-caller that treats any non-zero code as "nothing to show" hides those; key the
-silence on `3` alone.
+tree that never had a journal, and stay loud about everything else. It means a
+real check ran and the journal genuinely is not there; anything that could not
+be checked at all -- a journal that IS configured but cannot be reached
+(permissions, a broken symlink, a non-directory ancestor blocking the path), or
+a current directory that no longer exists, so the walk itself never ran -- is
+exit 1, same as any other failure. A caller that treats any non-zero code as
+"nothing to show" hides those; key the silence on `3` alone.
 
 The stderr promise on `1` is for the tool's own failures. `selftest` is a report
 a human or CI reads, not a single error, so its per-check lines, including any
