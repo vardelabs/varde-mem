@@ -53,6 +53,10 @@ try:
     import fcntl
 except ImportError:  # Windows has no fcntl; the fleet is Linux and macOS
     fcntl = None
+try:
+    import pwd
+except ImportError:  # Windows has no pwd either
+    pwd = None
 from pathlib import Path
 
 
@@ -83,6 +87,104 @@ CONFIG_KEYS = ("journal", "archive", "spine")
 # The environment variable naming a root, consulted only after the walk below
 # finds nothing.
 ROOT_ENV = "AGENT_VAULT"
+
+# Overrides where the trust config below is read from. Unset in the common
+# case; the default path already covers it.
+TRUST_FILE_ENV = "VARDEMEM_TRUST_FILE"
+
+
+def _trusted_home_dir():
+    """This user's home directory from the PASSWD ENTRY, never `$HOME` /
+    `Path.home()`: the walk this file does is exactly the mechanism an
+    untrusted tree could try to redirect (a direnv-loaded `.envrc`, a
+    devcontainer), and both read `$HOME` first. Trusting a value the walk
+    target could itself have set would make the trust config it points at
+    just another thing that tree controls. None on any host without a
+    resolvable passwd entry, Windows included -- callers degrade to no
+    trust config found, not a guess."""
+    if pwd is None:
+        return None
+    try:
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except (KeyError, OSError, AttributeError):
+        return None
+
+
+def _trust_file_path():
+    """Where the trusted-roots config lives. `$VARDEMEM_TRUST_FILE`
+    overrides the default outright when set -- an explicit operator choice,
+    not a value this file has to defend against the way it defends `$HOME`,
+    since setting it is no more reachable to an untrusted tree than setting
+    `$AGENT_VAULT` already is. Returns None only when NEITHER the override
+    nor a resolvable home is available."""
+    override = os.environ.get(TRUST_FILE_ENV, "").strip()
+    if override:
+        return Path(override)
+    home = _trusted_home_dir()
+    if home is None:
+        return None
+    return Path(home) / ".config" / "vardemem" / "trust.json"
+
+
+def _trusted_journal_roots():
+    """Repo roots this installation trusts to have their own `.vardemem.json`
+    discovered by the WALK, not just by an explicit `$AGENT_VAULT`.
+
+    Absent config means NO roots, not all roots -- the walk itself simply
+    finds nothing trustworthy and falls through to `$AGENT_VAULT`, same as
+    if the tree genuinely had no config at all. Any read failure (missing
+    file, bad JSON, a non-list, a non-string or non-absolute entry) means
+    no roots too: guessing past a malformed file is how it quietly widens
+    trust instead of narrowing it. Entries must be absolute paths -- no `~`
+    expansion, since `expanduser` reads `$HOME` too and an entry in this
+    exact file is where that would matter.
+
+    THE GAP THIS CLOSES: a public, installable tool that auto-discovers
+    `.vardemem.json` by walking up from the CURRENT DIRECTORY has no way to
+    tell a repo the operator actually put a journal in from any other repo
+    that merely happens to be open -- opening ANY repo carrying a planted
+    `.vardemem.json`, for any reason, auto-reads and would auto-inject
+    whatever it names as a journal. A flat trusted-roots list is the
+    configuration surface an installer sets once, not a mechanism specific
+    to any one deployment of this tool."""
+    path = _trust_file_path()
+    if path is None:
+        return ()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    try:
+        entries = json.loads(raw)
+    except ValueError:
+        return ()
+    if not isinstance(entries, list):
+        return ()
+    roots = []
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        if not os.path.isabs(entry):
+            continue
+        try:
+            roots.append(Path(entry).resolve())
+        except (ValueError, OSError):
+            continue
+    return tuple(roots)
+
+
+def _root_trusted(d, roots):
+    """Whether `d` is one of `roots`, or nested under one. `d` is already a
+    resolved Path by the time every caller reaches here (the walk loop
+    resolves `here` up front), so only `roots` needs no further handling.
+
+    DELIBERATELY a whole-subtree trust, not a single-directory one: an
+    entry names a checkout, and every path inside a checkout is already as
+    trusted as the checkout itself, the same as trusting a directory
+    trusts every file in it. List the narrowest root that is actually
+    yours -- a parent directory holding OTHER repos you do not control
+    trusts those too."""
+    return any(d == root or root in d.parents for root in roots)
 
 
 # Resolve the root by walking up from the CURRENT DIRECTORY first, and consult
@@ -132,6 +234,7 @@ def _resolve_root():
         # and is correct wherever it does fire.
         die("Could not resolve the current directory: %s" % e)
     if here is not None:
+        trusted = _trusted_journal_roots()
         for d in (here, *here.parents):
             cfg = d / CONFIG_NAME
             is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
@@ -145,7 +248,12 @@ def _resolve_root():
                 # (North, round 3.)
                 die("Could not check %s for a journal config: %s"
                     % (cfg, unreachable))
-            if is_file:
+            # An untrusted d with a REAL config is treated the same as one
+            # with none: keep walking past it rather than stopping here, so
+            # a trusted ANCESTOR further up still answers. $AGENT_VAULT is
+            # untouched by this -- it is the operator's own explicit
+            # per-session choice, not a directory this walk auto-discovered.
+            if is_file and _root_trusted(d, trusted):
                 return d, cfg
     env = os.environ.get(ROOT_ENV)
     if env:
@@ -2241,6 +2349,19 @@ def cmd_selftest(args):
     import tempfile
     print("problem routing (in a temp vault, by subprocess):")
 
+    # The trust gate on the walk (below `ROOT_ENV`) defaults to trusting
+    # NOTHING, so every throwaway fixture in this suite would otherwise be
+    # walked past as if it had no config at all. Every `_mkroot`/manual
+    # fixture below is created under the OS temp root, so one trust file
+    # naming that root covers all of them; `_run` sets $VARDEMEM_TRUST_FILE
+    # to it by default. Cases that specifically test the gate itself pass
+    # `trust=...` to point elsewhere instead.
+    _default_trust = Path(tempfile.mkdtemp(prefix="vardemem-selftest-trust-"))
+    (_default_trust / "trust.json").write_text(
+        json.dumps([str(Path(tempfile.gettempdir()).resolve())]),
+        encoding="utf-8")
+    _DEFAULT_TRUST_FILE = str(_default_trust / "trust.json")
+
     def _mkroot(rollups, ndays=20, archive=True, journal="history"):
         """A throwaway tree. Its layout is deliberately NOT the one this tool
         was extracted from: if the old hardcoded path survived anywhere, every
@@ -2261,11 +2382,15 @@ def cmd_selftest(args):
         (j / "SPINE.md").write_text("\n".join(out) + "\n", encoding="utf-8")
         return td, j, j / "SPINE.md"
 
-    def _run(cwd, *argv, root=None):
+    def _run(cwd, *argv, root=None, trust=_DEFAULT_TRUST_FILE):
         env = dict(os.environ)
         env.pop(ROOT_ENV, None)
         if root is not None:
             env[ROOT_ENV] = str(root)
+        if trust is None:
+            env.pop(TRUST_FILE_ENV, None)
+        else:
+            env[TRUST_FILE_ENV] = trust
         p = subprocess.run([sys.executable, __file__, *argv],
                            capture_output=True, text=True, cwd=str(cwd),
                            env=env)
@@ -3342,6 +3467,71 @@ def cmd_selftest(args):
                   "%s is refused, naming the file and %s" % (label, want))
         finally:
             shutil.rmtree(td, ignore_errors=True)
+
+    # The trust gate on the walk: a public, installable tool that auto-reads
+    # whatever `.vardemem.json` the WALK finds has no way to tell a repo the
+    # operator actually put a journal in from any other repo that merely
+    # happens to be open. An untrusted candidate with a real config must be
+    # treated the same as one with none -- not refused outright, just not
+    # trusted -- so the walk (or $AGENT_VAULT) can still answer past it.
+    outer_td = Path(tempfile.mkdtemp(prefix="vardemem-trustgate-"))
+    try:
+        # SIBLINGS, deliberately, not nested: trusting a root cascades to
+        # its whole subtree by design (the same way trusting a checkout
+        # trusts every file in it), so a directory NESTED under a trusted
+        # root is trusted too, on purpose -- that is not this gate's
+        # question. The question is a repo that is not under any trusted
+        # root at all.
+        untrusted_dir = outer_td / "untrusted-repo"
+        untrusted_dir.mkdir()
+        (untrusted_dir / CONFIG_NAME).write_text('{"journal": "history"}',
+                                                   encoding="utf-8")
+        (untrusted_dir / "history").mkdir()
+        (untrusted_dir / "history" / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-01-01 | untrusted\n\n## Rollups\n\n",
+            encoding="utf-8")
+        trusted_dir = outer_td / "trusted-vault"
+        trusted_dir.mkdir()
+        (trusted_dir / CONFIG_NAME).write_text('{"journal": "history"}',
+                                                 encoding="utf-8")
+        (trusted_dir / "history").mkdir()
+        (trusted_dir / "history" / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-02-02 | trusted\n\n## Rollups\n\n",
+            encoding="utf-8")
+
+        trust_cfg = Path(tempfile.mkdtemp(prefix="vardemem-trustgate-cfg-"))
+        (trust_cfg / "empty.json").write_text("[]", encoding="utf-8")
+        (trust_cfg / "trusted.json").write_text(
+            json.dumps([str(trusted_dir.resolve())]), encoding="utf-8")
+
+        rc, out = _run(untrusted_dir, "read",
+                        trust=str(trust_cfg / "empty.json"))
+        check(rc == EXIT_NO_JOURNAL,
+              "an untrusted cwd with a real config is walked past, not "
+              "read, when nothing else answers")
+        rc, out = _run(untrusted_dir, "read",
+                        trust=str(trust_cfg / "trusted.json"))
+        check(rc == EXIT_NO_JOURNAL,
+              "a config file listing a DIFFERENT trusted root does not "
+              "trust this one -- trust is not all-or-nothing once any "
+              "entry exists")
+        rc, out = _run(trusted_dir, "read",
+                        trust=str(trust_cfg / "trusted.json"))
+        check(rc == 0 and "2026-02-02" in out,
+              "a cwd that IS the trusted root reads its own journal")
+
+        env_td, env_jdir, env_spine = _mkroot([], ndays=1)
+        try:
+            rc, out = _run(untrusted_dir, "read", root=env_td,
+                            trust=str(trust_cfg / "empty.json"))
+            check(rc == 0 and "1 days" in out,
+                  "$%s answers on its own merits from an untrusted cwd -- "
+                  "the gate only touches the walk, never the env" % ROOT_ENV)
+        finally:
+            shutil.rmtree(env_td, ignore_errors=True)
+    finally:
+        shutil.rmtree(outer_td, ignore_errors=True)
+        shutil.rmtree(trust_cfg, ignore_errors=True)
 
     # Vega's review, coverage gap: Ctrl-C during a real run must exit 130,
     # and nothing proved it. Spawning `read` directly and racing a signal
