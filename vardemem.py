@@ -116,9 +116,18 @@ def _trust_file_path():
     not a value this file has to defend against the way it defends `$HOME`,
     since setting it is no more reachable to an untrusted tree than setting
     `$AGENT_VAULT` already is. Returns None only when NEITHER the override
-    nor a resolvable home is available."""
+    nor a resolvable home is available.
+
+    A RELATIVE override is a different question from who can SET it, and
+    the docstring's own reasoning does not cover it: `Path("mytrust.json")`
+    resolves against whatever cwd is at read time, the exact walk target
+    the gate exists to distrust. An operator who sets the override once to
+    a relative name would have every repo carrying a same-named file that
+    lists itself trust itself. Every entry INSIDE the file already has to
+    be absolute for this reason (see `_trusted_journal_roots`); the pointer
+    to the file gets the same rule. (North, round 8.)"""
     override = os.environ.get(TRUST_FILE_ENV, "").strip()
-    if override:
+    if override and os.path.isabs(override):
         return Path(override)
     home = _trusted_home_dir()
     if home is None:
@@ -233,6 +242,7 @@ def _resolve_root():
         # provably reachable on every platform, but it costs nothing to guard
         # and is correct wherever it does fire.
         die("Could not resolve the current directory: %s" % e)
+    found_untrusted = None
     if here is not None:
         trusted = _trusted_journal_roots()
         for d in (here, *here.parents):
@@ -249,12 +259,19 @@ def _resolve_root():
                 die("Could not check %s for a journal config: %s"
                     % (cfg, unreachable))
             # An untrusted d with a REAL config is treated the same as one
-            # with none: keep walking past it rather than stopping here, so
-            # a trusted ANCESTOR further up still answers. $AGENT_VAULT is
-            # untouched by this -- it is the operator's own explicit
-            # per-session choice, not a directory this walk auto-discovered.
-            if is_file and _root_trusted(d, trusted):
-                return d, cfg
+            # with none for RESOLUTION: keep walking past it rather than
+            # stopping here, so a trusted ANCESTOR further up still answers.
+            # $AGENT_VAULT is untouched by this -- it is the operator's own
+            # explicit per-session choice, not a directory this walk
+            # auto-discovered. The closest one is remembered (not silently
+            # dropped) so the final refusal, if the walk and the env both
+            # come up empty, can say what actually happened instead of
+            # claiming nothing was ever found. (North, round 8.)
+            if is_file:
+                if _root_trusted(d, trusted):
+                    return d, cfg
+                if found_untrusted is None:
+                    found_untrusted = cfg
     env = os.environ.get(ROOT_ENV)
     if env:
         cfg = Path(env) / CONFIG_NAME
@@ -279,6 +296,23 @@ def _resolve_root():
         die("Cannot locate a journal: the current directory no longer "
             "exists, so it could not be walked for %s, and $%s is unset."
             % (CONFIG_NAME, ROOT_ENV))
+    if found_untrusted is not None:
+        # NOT the generic message below: a real check ran, found a real
+        # config, and declined it on TRUST grounds, which is a different
+        # fact than "nothing was ever there" and the exit-3 contract this
+        # file documents ("a real check ran and the journal genuinely is
+        # not there") does not cover it either -- named honestly, still
+        # quiet, since a planted config in a tree the operator never
+        # trusted to be a journal root is exactly the case EXIT_NO_JOURNAL
+        # exists to let a caller stay silent over. (North, round 8.)
+        trust_path = _trust_file_path()
+        remedy = (("Add it to %s to read it here." % trust_path)
+                  if trust_path is not None else
+                  "No trusted-roots file could be resolved on this host.")
+        die("Found %s at %s, but that root is not on the trusted-roots "
+            "list, so the walk did not use it, and $%s is unset. %s"
+            % (CONFIG_NAME, found_untrusted.parent, ROOT_ENV, remedy),
+            EXIT_NO_JOURNAL)
     die("Cannot locate a journal: no %s in the current directory or any "
         "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV),
         EXIT_NO_JOURNAL)
@@ -350,12 +384,31 @@ def _warn_wrong_tree(root, rel):
                 # The RESOLVED journal, not the root: a symlinked journal puts
                 # the write somewhere neither path names, and this warning
                 # then said the opposite of what happened.
-                print("!! Writing the journal at %s,\n!! but the current "
-                      "directory is inside %s, which holds the same journal "
-                      "layout and declares no %s.\n!! Writes land in the "
-                      "FORMER. Add a %s to the latter if you meant it."
-                      % ((root / rel).resolve(), d, CONFIG_NAME, CONFIG_NAME),
-                      file=sys.stderr)
+                #
+                # "declares no CONFIG_NAME" held by CONSTRUCTION before the
+                # trust gate: _resolve_root's walk already claims the first
+                # candidate that HAS a config, so this function could never
+                # be looking at a `d` that has one too. The gate breaks
+                # that: a `d` on this walk can now hold a real config and
+                # still have lost the walk, for being untrusted rather than
+                # absent. Checked here, not assumed. (North, round 8.)
+                has_cfg, _ = _stat_state(d / CONFIG_NAME, _stat.S_ISREG)
+                if has_cfg:
+                    print("!! Writing the journal at %s,\n!! but the current "
+                          "directory is inside %s, which holds the same "
+                          "journal layout and has its own %s -- just not one "
+                          "on the trusted-roots list.\n!! Writes land in the "
+                          "FORMER. Add %s to the trusted-roots list if you "
+                          "meant to read from here."
+                          % ((root / rel).resolve(), d, CONFIG_NAME, d),
+                          file=sys.stderr)
+                else:
+                    print("!! Writing the journal at %s,\n!! but the current "
+                          "directory is inside %s, which holds the same journal "
+                          "layout and declares no %s.\n!! Writes land in the "
+                          "FORMER. Add a %s to the latter if you meant it."
+                          % ((root / rel).resolve(), d, CONFIG_NAME, CONFIG_NAME),
+                          file=sys.stderr)
             return
 
 
@@ -3509,6 +3562,13 @@ def cmd_selftest(args):
         check(rc == EXIT_NO_JOURNAL,
               "an untrusted cwd with a real config is walked past, not "
               "read, when nothing else answers")
+        # North, round 8: the message above used to be indistinguishable
+        # from "genuinely nothing found anywhere", which is false here -- a
+        # real check ran and found a real config, just not a trusted one.
+        check(CONFIG_NAME in out and str(untrusted_dir.resolve()) in out
+              and "no .vardemem.json in the current directory" not in out,
+              "the message names the config it found and declined, not "
+              "the generic never-found-anything text")
         rc, out = _run(untrusted_dir, "read",
                         trust=str(trust_cfg / "trusted.json"))
         check(rc == EXIT_NO_JOURNAL,
@@ -3529,6 +3589,51 @@ def cmd_selftest(args):
                   "the gate only touches the walk, never the env" % ROOT_ENV)
         finally:
             shutil.rmtree(env_td, ignore_errors=True)
+
+        # North, round 8, blocking 2: before the gate, a `d` on the walk
+        # that HELD the journal layout could never also hold a real config
+        # of its own -- the walk would already have claimed it. The gate
+        # breaks that invariant, and the wrong-tree warning's hardcoded
+        # "declares no .vardemem.json" became false for this one new case.
+        worktree_td, worktree_j, _ = _mkroot([], ndays=1, journal="history")
+        env_td, env_jdir, env_spine = _mkroot([], ndays=1, journal="history")
+        try:
+            rc, out = _run(worktree_td, "read", root=env_td,
+                            trust=str(trust_cfg / "empty.json"))
+            check("has its own %s" % CONFIG_NAME in out
+                  and "declares no %s" % CONFIG_NAME not in out,
+                  "the wrong-tree warning names an untrusted tree's REAL "
+                  "config, not the old claim that none exists")
+            check("trusted-roots list" in out,
+                  "and points at the trusted-roots list as the actual "
+                  "remedy, not a config file that's already there")
+        finally:
+            shutil.rmtree(env_td, ignore_errors=True)
+            shutil.rmtree(worktree_td, ignore_errors=True)
+
+        # North, round 8, nit: $VARDEMEM_TRUST_FILE resolving a RELATIVE
+        # override against cwd would let the walk target supply its own
+        # trust list -- the one path this mechanism did not already
+        # require to be absolute, unlike every entry inside the file.
+        self_naming = outer_td / "self-naming"
+        self_naming.mkdir()
+        (self_naming / CONFIG_NAME).write_text('{"journal": "history"}',
+                                                 encoding="utf-8")
+        (self_naming / "history").mkdir()
+        (self_naming / "history" / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-03-03 | x\n\n## Rollups\n\n",
+            encoding="utf-8")
+        (self_naming / "mytrust.json").write_text(
+            json.dumps([str(self_naming.resolve())]), encoding="utf-8")
+        env2 = dict(os.environ)
+        env2.pop(ROOT_ENV, None)
+        env2["VARDEMEM_TRUST_FILE"] = "mytrust.json"
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True,
+                            cwd=str(self_naming), env=env2)
+        check(p.returncode == EXIT_NO_JOURNAL,
+              "a relative $%s cannot let a repo name itself trusted"
+              % TRUST_FILE_ENV)
     finally:
         shutil.rmtree(outer_td, ignore_errors=True)
         shutil.rmtree(trust_cfg, ignore_errors=True)
