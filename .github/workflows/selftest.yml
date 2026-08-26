@@ -5,16 +5,15 @@ permissions:
 
 on:
   pull_request:
-  push:
-    branches: [main]
 
 jobs:
   selftest:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    # ubuntu-only: nothing here is OS-specific (POSIX stat/symlink checks
+    # behave the same on Linux and macOS), and GitHub bills macOS runners
+    # at roughly 10x the Linux per-minute rate for no coverage this tool
+    # actually needs. A push to main is always a commit a PR already ran
+    # this against, so push-triggering it again is pure re-billing.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       # The tool is standard library only, so the runner's own interpreter is
