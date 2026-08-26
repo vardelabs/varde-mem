@@ -47,17 +47,29 @@ import os
 import re
 import shlex
 import signal
+import stat as _stat
 import sys
 try:
     import fcntl
 except ImportError:  # Windows has no fcntl; the fleet is Linux and macOS
     fcntl = None
+try:
+    import pwd
+except ImportError:  # Windows has no pwd either
+    pwd = None
 from pathlib import Path
 
 
-def die(msg):
+# "There is no journal here" is not a failure, and a caller has to be able to
+# tell it from one. A session-start hook that cannot separate them either goes
+# quiet on real breakage or cries wolf in every tree that never had a spine.
+# 1 is any other refusal.
+EXIT_NO_JOURNAL = 3
+
+
+def die(msg, code=1):
     print(msg, file=sys.stderr)
-    sys.exit(1)
+    sys.exit(code)
 
 
 # The config file is the ROOT MARKER as well as the configuration: the
@@ -76,6 +88,113 @@ CONFIG_KEYS = ("journal", "archive", "spine")
 # finds nothing.
 ROOT_ENV = "AGENT_VAULT"
 
+# Overrides where the trust config below is read from. Unset in the common
+# case; the default path already covers it.
+TRUST_FILE_ENV = "VARDEMEM_TRUST_FILE"
+
+
+def _trusted_home_dir():
+    """This user's home directory from the PASSWD ENTRY, never `$HOME` /
+    `Path.home()`: the walk this file does is exactly the mechanism an
+    untrusted tree could try to redirect (a direnv-loaded `.envrc`, a
+    devcontainer), and both read `$HOME` first. Trusting a value the walk
+    target could itself have set would make the trust config it points at
+    just another thing that tree controls. None on any host without a
+    resolvable passwd entry, Windows included -- callers degrade to no
+    trust config found, not a guess."""
+    if pwd is None:
+        return None
+    try:
+        return pwd.getpwuid(os.getuid()).pw_dir
+    except (KeyError, OSError, AttributeError):
+        return None
+
+
+def _trust_file_path():
+    """Where the trusted-roots config lives. `$VARDEMEM_TRUST_FILE`
+    overrides the default outright when set -- an explicit operator choice,
+    not a value this file has to defend against the way it defends `$HOME`,
+    since setting it is no more reachable to an untrusted tree than setting
+    `$AGENT_VAULT` already is. Returns None only when NEITHER the override
+    nor a resolvable home is available.
+
+    A RELATIVE override is a different question from who can SET it, and
+    the docstring's own reasoning does not cover it: `Path("mytrust.json")`
+    resolves against whatever cwd is at read time, the exact walk target
+    the gate exists to distrust. An operator who sets the override once to
+    a relative name would have every repo carrying a same-named file that
+    lists itself trust itself. Every entry INSIDE the file already has to
+    be absolute for this reason (see `_trusted_journal_roots`); the pointer
+    to the file gets the same rule. (North, round 8.)"""
+    override = os.environ.get(TRUST_FILE_ENV, "").strip()
+    if override and os.path.isabs(override):
+        return Path(override)
+    home = _trusted_home_dir()
+    if home is None:
+        return None
+    return Path(home) / ".config" / "vardemem" / "trust.json"
+
+
+def _trusted_journal_roots():
+    """Repo roots this installation trusts to have their own `.vardemem.json`
+    discovered by the WALK, not just by an explicit `$AGENT_VAULT`.
+
+    Absent config means NO roots, not all roots -- the walk itself simply
+    finds nothing trustworthy and falls through to `$AGENT_VAULT`, same as
+    if the tree genuinely had no config at all. Any read failure (missing
+    file, bad JSON, a non-list, a non-string or non-absolute entry) means
+    no roots too: guessing past a malformed file is how it quietly widens
+    trust instead of narrowing it. Entries must be absolute paths -- no `~`
+    expansion, since `expanduser` reads `$HOME` too and an entry in this
+    exact file is where that would matter.
+
+    THE GAP THIS CLOSES: a public, installable tool that auto-discovers
+    `.vardemem.json` by walking up from the CURRENT DIRECTORY has no way to
+    tell a repo the operator actually put a journal in from any other repo
+    that merely happens to be open -- opening ANY repo carrying a planted
+    `.vardemem.json`, for any reason, auto-reads and would auto-inject
+    whatever it names as a journal. A flat trusted-roots list is the
+    configuration surface an installer sets once, not a mechanism specific
+    to any one deployment of this tool."""
+    path = _trust_file_path()
+    if path is None:
+        return ()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return ()
+    try:
+        entries = json.loads(raw)
+    except ValueError:
+        return ()
+    if not isinstance(entries, list):
+        return ()
+    roots = []
+    for entry in entries:
+        if not isinstance(entry, str) or not entry.strip():
+            continue
+        if not os.path.isabs(entry):
+            continue
+        try:
+            roots.append(Path(entry).resolve())
+        except (ValueError, OSError):
+            continue
+    return tuple(roots)
+
+
+def _root_trusted(d, roots):
+    """Whether `d` is one of `roots`, or nested under one. `d` is already a
+    resolved Path by the time every caller reaches here (the walk loop
+    resolves `here` up front), so only `roots` needs no further handling.
+
+    DELIBERATELY a whole-subtree trust, not a single-directory one: an
+    entry names a checkout, and every path inside a checkout is already as
+    trusted as the checkout itself, the same as trusting a directory
+    trusts every file in it. List the narrowest root that is actually
+    yours -- a parent directory holding OTHER repos you do not control
+    trusts those too."""
+    return any(d == root or root in d.parents for root in roots)
+
 
 # Resolve the root by walking up from the CURRENT DIRECTORY first, and consult
 # $AGENT_VAULT only after. The other order looked equivalent and was not:
@@ -91,21 +210,112 @@ ROOT_ENV = "AGENT_VAULT"
 # only knows where a session started.
 def _resolve_root():
     """(root, config path). Dies when neither the walk nor the environment
-    answers. The warning that used to live here is in _warn_wrong_tree, which
-    runs on BOTH answers rather than on this one."""
+    answers -- OR when either one exists but cannot be checked (an unreadable
+    ancestor, a broken config symlink): fail-closed, because an answer we
+    cannot verify might be hiding the real one, and guessing past it is worse
+    than refusing. The warning that used to live here is in _warn_wrong_tree,
+    which runs after a clean answer from the walk or the environment, not on
+    a refusal from this one.
+
+    $AGENT_VAULT, once set, answers on its OWN merits, independent of cwd's
+    state: a set env either finds a config, finds none, or is itself
+    unreachable, and any of those is a complete answer. Cwd only matters when
+    it is the ONLY source left to ask -- an unset env is what makes "the walk
+    never ran" load-bearing enough to refuse loud rather than quiet."""
     try:
         here = Path.cwd().resolve()
-    except OSError:
-        here = None                     # cwd deleted out from under us
+    except FileNotFoundError:
+        # The directory this process is standing in is GONE (a worktree
+        # removed out from under a live shell). NOT refused here:
+        # $AGENT_VAULT is the documented way to work outside the
+        # walk-discoverable tree, and answers fine regardless of cwd. Only a
+        # row where the env is also unset still refuses, below, named for
+        # what actually happened rather than folded into the walk's message.
+        here = None
+    except OSError as e:
+        # Reachable when cwd itself is unsearchable, at least on macOS: found
+        # while confirming North's round-3 door 2, where this raised before
+        # the walk loop below ever started. getcwd() is more forgiving on
+        # Linux (it can answer from the kernel's already-open reference
+        # without a fresh permission check), so there the walk loop's own
+        # guard is what actually catches the same fixture -- this site is not
+        # provably reachable on every platform, but it costs nothing to guard
+        # and is correct wherever it does fire.
+        die("Could not resolve the current directory: %s" % e)
+    found_untrusted = None
     if here is not None:
+        trusted = _trusted_journal_roots()
         for d in (here, *here.parents):
-            if (d / CONFIG_NAME).is_file():
-                return d, d / CONFIG_NAME
+            cfg = d / CONFIG_NAME
+            is_file, unreachable = _stat_state(cfg, _stat.S_ISREG)
+            if unreachable is not None:
+                # NOT a silent "no config here, keep walking". This IS the
+                # resolution, not a heuristic like _warn_wrong_tree's walk: an
+                # ancestor we cannot check might be hiding the real config, and
+                # answering EXIT_NO_JOURNAL here would tell a caller keying its
+                # silence on that code that no journal is configured, when one
+                # may well be, just behind a directory we could not read.
+                # (North, round 3.)
+                die("Could not check %s for a journal config: %s"
+                    % (cfg, unreachable))
+            # An untrusted d with a REAL config is treated the same as one
+            # with none for RESOLUTION: keep walking past it rather than
+            # stopping here, so a trusted ANCESTOR further up still answers.
+            # $AGENT_VAULT is untouched by this -- it is the operator's own
+            # explicit per-session choice, not a directory this walk
+            # auto-discovered. The closest one is remembered (not silently
+            # dropped) so the final refusal, if the walk and the env both
+            # come up empty, can say what actually happened instead of
+            # claiming nothing was ever found. (North, round 8.)
+            if is_file:
+                if _root_trusted(d, trusted):
+                    return d, cfg
+                if found_untrusted is None:
+                    found_untrusted = cfg
     env = os.environ.get(ROOT_ENV)
     if env:
-        return Path(env), Path(env) / CONFIG_NAME
+        cfg = Path(env) / CONFIG_NAME
+        # Same rigor as the walk above, and for the same reason: a config
+        # that IS there but broken (most likely a dangling symlink) is not
+        # the same answer as one that was never written, and folding it into
+        # EXIT_NO_JOURNAL would tell a caller keying its silence on that code
+        # that $AGENT_VAULT has no journal configured, when it has one that
+        # is misconfigured. (Vega.)
+        _, unreachable = _stat_state(cfg, _stat.S_ISREG)
+        if unreachable is not None:
+            die("Could not check %s for a journal config: %s" % (cfg, unreachable))
+        return Path(env), cfg
+    if here is None:
+        # The walk above never ran at all -- say so, rather than the message
+        # below, which asserts a walk of "the current directory or any
+        # parent" that did not happen. Exit 1, not EXIT_NO_JOURNAL: a deleted
+        # cwd is the strongest form of "cannot be checked", same reason the
+        # unreachable-ancestor branch above refuses loud rather than quiet --
+        # a config in a surviving parent of the deleted directory would be
+        # real and unreported.
+        die("Cannot locate a journal: the current directory no longer "
+            "exists, so it could not be walked for %s, and $%s is unset."
+            % (CONFIG_NAME, ROOT_ENV))
+    if found_untrusted is not None:
+        # NOT the generic message below: a real check ran, found a real
+        # config, and declined it on TRUST grounds, which is a different
+        # fact than "nothing was ever there" and the exit-3 contract this
+        # file documents ("a real check ran and the journal genuinely is
+        # not there") does not cover it either -- named honestly, still
+        # quiet, since a planted config in a tree the operator never
+        # trusted to be a journal root is exactly the case EXIT_NO_JOURNAL
+        # exists to let a caller stay silent over. (North, round 8.)
+        trust_path = _trust_file_path()
+        remedy = (("Add it to %s to read it here." % trust_path)
+                  if trust_path is not None else
+                  "No trusted-roots file could be resolved on this host.")
+        die("Found %s at %s, but that root is not on the trusted-roots "
+            "list, so the walk did not use it, and $%s is unset. %s"
+            % (CONFIG_NAME, found_untrusted.parent, ROOT_ENV, remedy),
+            EXIT_NO_JOURNAL)
     die("Cannot locate a journal: no %s in the current directory or any "
-        "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV))
+        "parent, and $%s is unset." % (CONFIG_NAME, ROOT_ENV),
+        EXIT_NO_JOURNAL)
 
 
 def _read_config(path):
@@ -119,7 +329,7 @@ def _read_config(path):
     except FileNotFoundError:
         die('No %s. Create it at the root of the tree that holds the '
             'journal:\n  {"journal": "<path to the journal, relative to %s>"}'
-            % (path, path.parent))
+            % (path, path.parent), EXIT_NO_JOURNAL)
     except OSError as e:
         die("Could not read %s: %s" % (path, e))
     try:
@@ -143,16 +353,27 @@ def _read_config(path):
 def _warn_wrong_tree(root, rel):
     """Warn when cwd sits inside a DIFFERENT tree holding the same journal
     layout. `warn_wrong_checkout` from the vault copy, with its one hardcoded
-    path parameterised. Runs on BOTH answers from _resolve_root, not just the
-    walk: the environment branch is the one the ordering exists to police. Do
-    not key this on a `.git` entry instead: that warns for an unrelated
-    repository and stays quiet for a journal tree that is not a checkout."""
+    path parameterised. Runs after either a walk answer or an environment
+    answer from _resolve_root, not just the walk: the environment branch is
+    the one the ordering exists to police. Never runs on a fail-closed
+    refusal (an unreadable ancestor, a broken config symlink) -- that has
+    already exited before this is reached. Do not key this on a `.git` entry
+    instead: that warns for an unrelated repository and stays quiet for a
+    journal tree that is not a checkout."""
     try:
         here = Path.cwd()
     except OSError:
         return
     for d in (here, *here.parents):
-        if (d / rel).is_dir():
+        # Unreachable is not a match, not a refusal: this walk is a heuristic
+        # over directories nobody named, including the configured journal
+        # itself when it is a symlink into an unreadable tree. Swallowing it
+        # here is safe because the caller that CAN refuse checks the same
+        # path again right after (_run's _dir_state guard); this is only
+        # reachable in the same shape North's #2 round-2 finding was, and my
+        # own new symlink check crashed here on 3.9-3.12 before that guard
+        # ever ran. (North, in effect.)
+        if _dir_state(d / rel)[0]:
             # Compare the JOURNALS, resolved, not the trees. Two trees that
             # symlink one shared journal are not a wrong-tree case, and a
             # symlink is the supported way to put a journal outside its root,
@@ -163,12 +384,31 @@ def _warn_wrong_tree(root, rel):
                 # The RESOLVED journal, not the root: a symlinked journal puts
                 # the write somewhere neither path names, and this warning
                 # then said the opposite of what happened.
-                print("!! Writing the journal at %s,\n!! but the current "
-                      "directory is inside %s, which holds the same journal "
-                      "layout and declares no %s.\n!! Writes land in the "
-                      "FORMER. Add a %s to the latter if you meant it."
-                      % ((root / rel).resolve(), d, CONFIG_NAME, CONFIG_NAME),
-                      file=sys.stderr)
+                #
+                # "declares no CONFIG_NAME" held by CONSTRUCTION before the
+                # trust gate: _resolve_root's walk already claims the first
+                # candidate that HAS a config, so this function could never
+                # be looking at a `d` that has one too. The gate breaks
+                # that: a `d` on this walk can now hold a real config and
+                # still have lost the walk, for being untrusted rather than
+                # absent. Checked here, not assumed. (North, round 8.)
+                has_cfg, _ = _stat_state(d / CONFIG_NAME, _stat.S_ISREG)
+                if has_cfg:
+                    print("!! Writing the journal at %s,\n!! but the current "
+                          "directory is inside %s, which holds the same "
+                          "journal layout and has its own %s -- just not one "
+                          "on the trusted-roots list.\n!! Writes land in the "
+                          "FORMER. Add %s to the trusted-roots list if you "
+                          "meant to read from here."
+                          % ((root / rel).resolve(), d, CONFIG_NAME, d),
+                          file=sys.stderr)
+                else:
+                    print("!! Writing the journal at %s,\n!! but the current "
+                          "directory is inside %s, which holds the same journal "
+                          "layout and declares no %s.\n!! Writes land in the "
+                          "FORMER. Add a %s to the latter if you meant it."
+                          % ((root / rel).resolve(), d, CONFIG_NAME, CONFIG_NAME),
+                          file=sys.stderr)
             return
 
 
@@ -223,7 +463,7 @@ def _paths():
         cfg = _read_config(conf)
         if "journal" not in cfg:
             die('%s does not set "journal", so there is no journal to read.'
-                % conf)
+                % conf, EXIT_NO_JOURNAL)
         rel = _cfg_path(conf, "journal", cfg["journal"], root)
         journal = root / rel
         # `archive` has NO default: a second day-file directory is a migration
@@ -234,7 +474,8 @@ def _paths():
                                         journal)
                      if "archive" in cfg else None),
             spine=journal / _cfg_path(conf, "spine",
-                                      cfg.get("spine", "SPINE.md"), journal))
+                                      cfg.get("spine", "SPINE.md"), journal),
+            spine_set="spine" in cfg)
         # After every value is checked, never between: it announces where
         # writes go, and a later refusal makes that announcement a lie.
         _warn_wrong_tree(root, rel)
@@ -262,6 +503,11 @@ def archive_dir():
 
 def spine_path():
     return _paths()["spine"]
+
+
+def spine_configured():
+    """Whether the config named the spine, so a failure can say who chose it."""
+    return _paths()["spine_set"]
 
 
 BUDGET = 120       # lines a read may print
@@ -515,15 +761,32 @@ def parse():
     order check killed the session-start read with zero lines printed. Detect
     the markers by name so the diagnosis is the actual problem."""
     days, rollups, problems, roll_bad = [], {}, [], []
-    if not spine_path().exists():
-        return days, rollups, problems, roll_bad
-    # EXISTING is not READABLE, whether because of its type or its bytes.
-    # Both arrive here as OSError or ValueError.
+    # No `exists()` probe first: it stats, and stat raises PermissionError when
+    # the journal directory cannot be searched, which put the one shape this
+    # guard exists for outside the guard. Absent is the FileNotFoundError case;
+    # unreadable, by type or by bytes, is the one below it.
+    sp = spine_path()
     try:
-        text = spine_path().read_text(encoding="utf-8")
+        text = sp.read_text(encoding="utf-8")
+    except FileNotFoundError as e:
+        # A dangling symlink NAMED "spine" is discouraged (README) but a
+        # dangling component ABOVE it, e.g. "sub/SPINE.md" with "sub" itself
+        # a broken symlink, raises this identical error and is not: it is
+        # the spine's OWN journal-root config breaking, one level removed
+        # from the journal-directory case _stat_state already refuses on.
+        # Reading it as "no spine yet" degrades every command silently
+        # rather than naming the break. (Vega.)
+        if os.path.islink(sp) or _broken_ancestor(sp):
+            die("Could not read the spine at %s: %s%s"
+                % (sp, e,
+                   '\n("spine" in %s)' % config_path() if spine_configured()
+                   else "\n(the default name, under the configured journal)"))
+        return days, rollups, problems, roll_bad
     except (OSError, ValueError) as e:
-        die('Could not read the spine at %s: %s\n("spine" in %s)'
-            % (spine_path(), e, config_path()))
+        die("Could not read the spine at %s: %s%s"
+            % (sp, e,
+               '\n("spine" in %s)' % config_path() if spine_configured()
+               else "\n(the default name, under the configured journal)"))
     section, seen_sections = None, set()
     for n, line in enumerate(text.splitlines(), 1):
         s = line.strip()
@@ -725,7 +988,7 @@ def lock():
         # open() sat outside the try, so an unwritable Journal tracebacked past
         # the die() two lines below. This file's standard is that the
         # day-close hot path never tracebacks. (North, round 11.)
-        die("Could not lock %s: %s" % (spine_path().name, e))
+        die("Could not lock %s: %s" % (journal_dir() / ".spine.lock", e))
     _LOCK.append(f)
 
 
@@ -861,6 +1124,116 @@ def check(text):
     return text
 
 
+def _broken_ancestor(p):
+    """Whether some ancestor of `p`, not `p` itself, blocks reaching it: a
+    symlink whose target is gone, OR a plain file (or a live symlink to one)
+    sitting where a directory was expected. `islink(p)` alone only ever
+    inspects the FINAL component, so a configured journal like "link/history"
+    where "link" dangles, or "blocker/archive" where "blocker" is a regular
+    file left behind by a botched migration, raises the identical
+    FileNotFoundError/NotADirectoryError as genuine absence and is
+    indistinguishable from it to a caller that only checks the leaf. Walk up
+    to the first ancestor that is actually there (lexists survives a
+    dangling symlink; stat/exists does not) and ask whether THAT one is
+    either a dead symlink or simply not a directory at all. (Vega; the
+    non-directory-ancestor half, class-completion sweep.)"""
+    for anc in p.parents:
+        if os.path.lexists(anc):
+            if os.path.islink(anc) and not os.path.exists(anc):
+                return True
+            return not anc.is_dir()
+    return False
+
+
+def _stat_state(p, istype):
+    """(matches_type, unreachable_error), shared by the dir and file probes.
+
+    ENOENT usually means "genuinely not there", so it is folded into `False,
+    None`, a plain non-match. Not when `p` is a symlink, or sits behind one:
+    then something IS there and its TARGET is gone, which is the configured
+    route breaking, not the absence of one, and losing the target is exactly
+    how the symlinked journal `_warn_wrong_tree` documents as supported
+    breaks. `islink`/`lexists` are plain `lstat` and cannot themselves raise
+    the way `stat` does, so they are safe to call after `stat` already
+    failed. (North; ancestor case, Vega.)"""
+    try:
+        return istype(os.stat(p).st_mode), None
+    except (FileNotFoundError, NotADirectoryError) as e:
+        if os.path.islink(p) or _broken_ancestor(p):
+            return False, e
+        return False, None
+    except OSError as e:
+        return False, e
+
+
+def _dir_state(p):
+    """(is_dir, unreachable_error). The error is the THIRD answer `is_dir()`
+    collapses: it returns False for an unreachable path from 3.13 on and raises
+    before it, so "not a directory" and "cannot be reached" arrive as one.
+    A caller that must refuse names the error; a caller that is only guessing
+    treats it as no match. (North.)"""
+    return _stat_state(p, _stat.S_ISDIR)
+
+
+def _present(p):
+    """Whether `p` is there. Not `exists()`: it raises PermissionError on an
+    unsearchable parent up to 3.12 and returns False from 3.13 on, so one tree
+    tracebacks on one interpreter and reports "No journal" on the next while
+    the journal sits in it. Absent is ENOENT or ENOTDIR; every other cause
+    refuses under its own name rather than passing for absent.
+
+    Also refuses on a BROKEN `p`: a dangling day-file symlink made
+    `os.listdir` (which lists the link name) and this function (which
+    follows it and fails) disagree about whether the day "has a journal" --
+    `missing` named it forever, `draft`/`put` refused it forever, and
+    neither said why. `_day_files` right below does NOT share this check on
+    its own listing -- a caller calls this per name, once it decides the
+    name is worth the cost; see `journal_dates`."""
+    try:
+        p.stat()
+    except (FileNotFoundError, NotADirectoryError) as e:
+        if os.path.islink(p) or _broken_ancestor(p):
+            die("Could not reach the journal at %s: %s" % (p, e))
+        return False
+    except OSError as e:
+        die("Could not reach the journal at %s: %s" % (p, e))
+    return True
+
+
+def _day_files(d, prefix):
+    """The `<prefix>*.md` files in `d`, none when `d` is not there. Not
+    `glob()`: it swallows every OSError, so an unsearchable directory reads as
+    an empty one, and `missing` then calls a day with a real archived journal
+    behind it a fabricated line, exit 0. (North.)
+
+    Also refuses when `d` ITSELF is broken, not only when it is unsearchable:
+    a dangling symlink, one dangling further up, OR `d` existing as the wrong
+    TYPE (a plain file left behind by a botched migration that moved the real
+    archive aside). Any of the three looked identical to an archive that was
+    genuinely always empty, and `missing` reported the same fabricated-line
+    harm this function's own docstring already names for the unsearchable
+    case, just through a sibling door. `lexists` alone covers the dangling-
+    symlink-at-the-leaf case too now (a symlink always lexists, live or
+    dead), so it subsumes the old plain `islink` check. (Vega; the wrong-
+    type case, class-completion sweep.)
+
+    Does NOT check each individual NAME through `_present` -- deliberately
+    not this function's job. The archive call below passes prefix="", so
+    every `.md` name in the directory reaches here, including ones that
+    were never a journal day (a stray README, migration leftovers); a
+    caller that owns the day-shape test excludes those BEFORE deciding
+    whether a real day file's reachability is worth dying over."""
+    try:
+        names = os.listdir(d)
+    except (FileNotFoundError, NotADirectoryError) as e:
+        if os.path.lexists(d) or _broken_ancestor(d):
+            die("Could not list %s: %s" % (d, e))
+        return []
+    except OSError as e:
+        die("Could not list %s: %s" % (d, e))
+    return [d / n for n in names if n.startswith(prefix) and n.endswith(".md")]
+
+
 def journal_files(date):
     """A day's raw journals, oldest surface first. Usually one file, but an
     archive cutover leaves the cutover day split across both directories with
@@ -869,18 +1242,20 @@ def journal_files(date):
     arc = archive_dir()
     if arc is not None:
         cand.insert(0, arc / ("%s.md" % date))
-    return [p for p in cand if p.exists()]
+    return [p for p in cand if _present(p)]
 
 
 def journal_dates():
-    """Every day that has a journal, oldest first.
+    """Every day that has a journal, oldest first. NOT a pure query: refuses
+    (process exit, not a return) the moment a real day file is unreachable,
+    same as `journal_files` does for a single date.
 
     real_date, not the shape regex: a mistyped filename like
     journal-2026-02-30.md otherwise sticks in `missing` forever, because both
     `draft` and `put` refuse it and no command clears it. The third date gate,
     missed when round 8 unified the other two. (North, round 9.)"""
     found, bad = set(), []
-    for p in journal_dir().glob("journal-*.md"):
+    for p in _day_files(journal_dir(), "journal-"):
         # The EXACT canonical name, not a date found anywhere in it.
         # `DATE.search` accepted `journal-2026-01-01-backup.md` as covering
         # that day, while journal_files() only opens `journal-<date>.md`, so
@@ -890,12 +1265,19 @@ def journal_dates():
         # (Codex, cross-model review, round 2.)
         stem = p.stem[len("journal-"):]
         if real_date(stem):
+            # Gated on real_date: only a genuine day file pays for its own
+            # reachability. _present dies on the first one it finds broken,
+            # so one dangling real day hides every other outstanding day
+            # behind it -- reporting it alongside `bad` instead is an open
+            # question, not decided here.
+            _present(p)
             found.add(stem)
         elif DATE.fullmatch(stem):
             bad.append(p.name)
     arc = archive_dir()
-    for p in (arc.glob("*.md") if arc is not None else ()):
+    for p in (_day_files(arc, "") if arc is not None else ()):
         if real_date(p.stem):
+            _present(p)
             found.add(p.stem)
         elif DATE.fullmatch(p.stem):
             bad.append(p.name)
@@ -2020,6 +2402,19 @@ def cmd_selftest(args):
     import tempfile
     print("problem routing (in a temp vault, by subprocess):")
 
+    # The trust gate on the walk (below `ROOT_ENV`) defaults to trusting
+    # NOTHING, so every throwaway fixture in this suite would otherwise be
+    # walked past as if it had no config at all. Every `_mkroot`/manual
+    # fixture below is created under the OS temp root, so one trust file
+    # naming that root covers all of them; `_run` sets $VARDEMEM_TRUST_FILE
+    # to it by default. Cases that specifically test the gate itself pass
+    # `trust=...` to point elsewhere instead.
+    _default_trust = Path(tempfile.mkdtemp(prefix="vardemem-selftest-trust-"))
+    (_default_trust / "trust.json").write_text(
+        json.dumps([str(Path(tempfile.gettempdir()).resolve())]),
+        encoding="utf-8")
+    _DEFAULT_TRUST_FILE = str(_default_trust / "trust.json")
+
     def _mkroot(rollups, ndays=20, archive=True, journal="history"):
         """A throwaway tree. Its layout is deliberately NOT the one this tool
         was extracted from: if the old hardcoded path survived anywhere, every
@@ -2040,11 +2435,15 @@ def cmd_selftest(args):
         (j / "SPINE.md").write_text("\n".join(out) + "\n", encoding="utf-8")
         return td, j, j / "SPINE.md"
 
-    def _run(cwd, *argv, root=None):
+    def _run(cwd, *argv, root=None, trust=_DEFAULT_TRUST_FILE):
         env = dict(os.environ)
         env.pop(ROOT_ENV, None)
         if root is not None:
             env[ROOT_ENV] = str(root)
+        if trust is None:
+            env.pop(TRUST_FILE_ENV, None)
+        else:
+            env[TRUST_FILE_ENV] = trust
         p = subprocess.run([sys.executable, __file__, *argv],
                            capture_output=True, text=True, cwd=str(cwd),
                            env=env)
@@ -2588,6 +2987,518 @@ def cmd_selftest(args):
         shutil.rmtree(td, ignore_errors=True)
         shutil.rmtree(other, ignore_errors=True)
 
+    # An unreadable journal DIRECTORY. The exists() probe used to sit outside
+    # the guard and stat raised PermissionError there, so the one shape the
+    # guard exists for was the one it missed. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        os.chmod(jdir, 0o000)
+        rc, out = _run(jdir.parent, "read")
+        # `draft` never parses the spine, so it reached the SAME shape through
+        # journal_files(). What it did there depended on the interpreter:
+        # exists() raised up to 3.12 and returns False from 3.13 on, so this
+        # tree tracebacked on one Python and said "No journal" on the next,
+        # with the journal in it. Neither is a refusal. (North.)
+        rc2, out2 = _run(jdir.parent, "draft", "2026-01-01")
+        check(rc != 0 and "Traceback" not in out and "Could not read" in out,
+              "an unreadable journal directory refuses without a traceback")
+        check(rc2 != 0 and "Traceback" not in out2
+              and "Could not reach" in out2,
+              "and `draft` refuses there too, on every interpreter")
+    finally:
+        os.chmod(jdir, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The journal directory reaches the same listing by a narrower door. A
+    # mode of 111 is searchable but not listable, so the spine opens by name
+    # and parses, and only then does the listing fail. Every recorded day then
+    # reads as having no journal behind it: real history, called fabricated,
+    # exit 0. A wider mode cannot show this, because the spine lives under the
+    # journal directory and refuses first.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        (jdir / "journal-2026-01-01.md").write_text("# real", encoding="utf-8")
+        os.chmod(jdir, 0o111)
+        rc, out = _run(jdir.parent, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "a searchable-but-not-listable journal directory refuses, and "
+              "does not call a real day fabricated")
+    finally:
+        os.chmod(jdir, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # A journal that cannot be REACHED must not answer EXIT_NO_JOURNAL: that is
+    # the code a session-start caller goes silent on, so it would hide an
+    # unreadable journal from every hook that keys on it. Reached through a
+    # symlinked journal, which _warn_wrong_tree documents as the supported way
+    # to put a journal outside its root. is_dir() collapsed this into "absent"
+    # from 3.13 on and raised before it. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    outer = Path(tempfile.mkdtemp(prefix="vardemem-outer-"))
+    try:
+        real = outer / "vault" / "history"
+        real.mkdir(parents=True)
+        shutil.copy(str(spine_md), str(real / "SPINE.md"))
+        shutil.rmtree(jdir)
+        jdir.symlink_to(real)
+        os.chmod(outer / "vault", 0o000)
+        rc, out = _run(Path(td), "read")
+        check(rc == 1 and "Traceback" not in out and "Could not reach" in out,
+              "a journal that cannot be reached refuses, and never as "
+              "EXIT_NO_JOURNAL")
+    finally:
+        os.chmod(outer / "vault", 0o755)
+        shutil.rmtree(outer, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Door 1 (North, round 3): a broken symlink is not the SAME unreachable
+    # case as a permission-blocked target above -- ENOENT on a symlink used to
+    # fold into "absent", answering EXIT_NO_JOURNAL for a journal that WAS
+    # configured, just pointing nowhere. `_warn_wrong_tree` documents a
+    # symlinked journal as supported; losing the target is how that breaks.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        shutil.rmtree(jdir)
+        jdir.symlink_to(Path(td) / "nowhere")
+        rc, out = _run(Path(td), "read")
+        check(rc == 1 and "Traceback" not in out and "Could not reach" in out,
+              "a journal symlinked to a target that is gone refuses, and "
+              "never as EXIT_NO_JOURNAL")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Door 2 (North, round 3): the WALK that finds the config, not the journal
+    # it points to, had the identical unreachable-folds-into-absent shape at
+    # two sites. `Path.cwd().resolve()` itself raises when cwd cannot be
+    # reached (on macOS at least; getcwd() is more forgiving on Linux, see
+    # _resolve_root), indistinguishable from "cwd was deleted" until this fix;
+    # and the walk's own per-ancestor probe silently continued on an
+    # unreachable config, misreporting "no journal anywhere" for a tree that
+    # had one. Whichever of the two actually fires on a given platform, both
+    # are guarded now, and the check below accepts either message.
+    # _run() cannot build this fixture: it sets the CHILD's cwd via
+    # subprocess's own `cwd=`, which is a fresh chdir() and needs search
+    # permission on `blocked` at spawn time -- exactly what this fixture
+    # removes, so it would fail to spawn at all rather than exercise
+    # anything. Positioning the DRIVER there first and letting the child
+    # inherit cwd through fork (no second chdir) is the same mechanism a
+    # shell's `cd dir && chmod 000 dir && run` relies on, and is how this
+    # was found and confirmed against the real fixture, not simulation.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-doortwo-"))
+    saved_cwd = os.getcwd()
+    blocked = td / "blocked"
+    try:
+        blocked.mkdir()
+        (blocked / ".vardemem.json").write_text('{"journal": "j"}',
+                                                 encoding="utf-8")
+        os.chdir(blocked)
+        os.chmod(blocked, 0o000)
+        env = dict(os.environ)
+        env.pop(ROOT_ENV, None)
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True, env=env)
+        os.chdir(saved_cwd)
+        os.chmod(blocked, 0o755)
+        rc, out = p.returncode, p.stdout + p.stderr
+        # Which guard catches this is a platform detail, not the contract:
+        # Linux's getcwd() can answer from the kernel's already-open dentry
+        # without re-checking permission on the target, so Path.cwd().resolve()
+        # may not raise there the way it does on macOS, and the walk loop's own
+        # guard (independently pinned by the broken-symlink-config check above)
+        # catches it instead, under a different message. Either is a real
+        # refusal; only silently reporting no-journal-anywhere is wrong.
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and ("Could not resolve" in out or "Could not check" in out),
+              "a cwd that cannot itself be resolved refuses, rather than "
+              "reporting no journal anywhere")
+    finally:
+        os.chdir(saved_cwd)
+        if blocked.is_dir():
+            os.chmod(blocked, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Sibling of the fixture above, deletion instead of permission: a shell
+    # left standing in a worktree that `git worktree remove` (or a plain
+    # `rm -rf`) just took out from under it. Same driver-first mechanism --
+    # chdir before removing, then spawn without a cwd= override so the child
+    # inherits via fork rather than a fresh chdir() into nothing.
+    #
+    # A deleted cwd is NOT refused outright: $AGENT_VAULT is the documented
+    # way to work OUTSIDE the walk-discoverable tree and answers fine
+    # regardless of cwd's state. Only the row where $AGENT_VAULT ALSO does
+    # not answer must refuse -- at exit 1, not EXIT_NO_JOURNAL: a deleted cwd
+    # is the strongest form of "cannot be checked" (every candidate
+    # directory at once), and a config in a surviving parent would be real
+    # and unreported if this stayed quiet. The message is honest too: the
+    # walk's own "no journal in the current directory or any parent" is
+    # false here specifically, since `here = None` skips the walk loop whole.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-"))
+    saved_cwd = os.getcwd()
+    victim = td / "victim"
+    try:
+        victim.mkdir()
+        os.chdir(victim)
+        shutil.rmtree(victim)
+        env = dict(os.environ)
+        env.pop(ROOT_ENV, None)
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True, env=env)
+        os.chdir(saved_cwd)
+        rc, out = p.returncode, p.stdout + p.stderr
+        check(rc == 1 and "Traceback" not in out and "current directory or "
+              "any parent" not in out and "no longer exists" in out,
+              "a cwd deleted out from under the process, with $%s also "
+              "unset, refuses at exit 1 (not the quiet EXIT_NO_JOURNAL, and "
+              "not a crash) and says the cwd is gone, not that a walk found "
+              "nothing" % ROOT_ENV)
+    finally:
+        os.chdir(saved_cwd)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The row that actually matters: a session-start hook always carries
+    # $AGENT_VAULT, so a deleted cwd must not stop it from answering when it
+    # names a perfectly good tree.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-deletedcwd-vault-"))
+    saved_cwd = os.getcwd()
+    victim = td / "victim"
+    vault_td, vault_jdir, vault_spine = _mkroot([], ndays=1)
+    try:
+        victim.mkdir()
+        os.chdir(victim)
+        shutil.rmtree(victim)
+        env = dict(os.environ)
+        env[ROOT_ENV] = str(vault_td)
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True, env=env)
+        os.chdir(saved_cwd)
+        rc, out = p.returncode, p.stdout + p.stderr
+        check(rc == 0 and "1 days" in out,
+              "a deleted cwd does not stop $%s from answering when it "
+              "names a valid tree" % ROOT_ENV)
+    finally:
+        os.chdir(saved_cwd)
+        shutil.rmtree(vault_td, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
+
+    td = Path(tempfile.mkdtemp(prefix="vardemem-doortwo-"))
+    try:
+        (td / ".vardemem.json").symlink_to(td / "nowhere.json")
+        rc, out = _run(td, "read")
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not check" in out,
+              "a config file symlinked to a target that is gone refuses "
+              "there, not three ancestors later claiming nothing was found")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Vega's review of this PR: the walk's config probe goes through
+    # _stat_state (the check just above), but the $AGENT_VAULT fallback
+    # built its config path by hand and never ran it through anything --
+    # the identical broken-symlink-config case, reached through the OTHER
+    # of _resolve_root's two doors, folded into EXIT_NO_JOURNAL instead of
+    # refusing. cwd here is a plain empty tree so the walk finds nothing and
+    # falls through to the environment on its own.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-envdoor-"))
+    outside = Path(tempfile.mkdtemp(prefix="vardemem-envdoor-cwd-"))
+    try:
+        (td / CONFIG_NAME).symlink_to(td / "nowhere.json")
+        rc, out = _run(outside, "read", root=td)
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not check" in out,
+              "a config reached via $%s and symlinked to a target that is "
+              "gone refuses there too, not as EXIT_NO_JOURNAL" % ROOT_ENV)
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+        shutil.rmtree(outside, ignore_errors=True)
+
+    # Vega's review, second finding: islink(p) only ever inspects p's OWN
+    # final component. A journal configured as "link/history" where "link"
+    # itself dangles never gets that far -- stat() fails resolving THROUGH
+    # "link", and the leaf "history" was never a symlink at all -- so the
+    # old check missed it and this folded into "no journal" exactly like
+    # the direct case above.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-envdoor-"))
+    try:
+        (td / CONFIG_NAME).write_text('{"journal": "link/history"}',
+                                       encoding="utf-8")
+        (td / "link").symlink_to(td / "nowhere")
+        rc, out = _run(td, "read")
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not reach" in out,
+              "a journal path threaded through a dangling INTERMEDIATE "
+              "symlink refuses, not just one that is itself the symlink")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The same defect through the ARCHIVE, where it is worse: glob() swallows
+    # the OSError, so an unsearchable archive reads as an empty one and
+    # `missing` calls a day with a real archived journal behind it a
+    # fabricated line, exit 0. A refusal is recoverable; that is not. (North.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    arc = jdir / "archive"
+    try:
+        (arc / "2026-01-01.md").write_text("# real", encoding="utf-8")
+        os.chmod(arc, 0o000)
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "an unreadable archive refuses, and does not call a real day "
+              "fabricated")
+    finally:
+        os.chmod(arc, 0o755)
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The same defect through the ARCHIVE again, as a BROKEN SYMLINK rather
+    # than an unreadable directory: the archive volume unmounted, or its
+    # symlink target moved. _day_files folded the resulting FileNotFoundError
+    # into "empty" exactly like the unsearchable case just above did before
+    # North's fix, and a real archived day looked fabricated at exit 0
+    # instead of the archive itself refusing to be listed. (Vega.)
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    real_archive = Path(td) / "real-archive"
+    try:
+        arc = jdir / "archive"
+        shutil.copytree(arc, real_archive)
+        shutil.rmtree(arc)
+        arc.symlink_to(real_archive)
+        shutil.rmtree(real_archive)  # dangle it
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "a dangling archive symlink refuses, and does not call a "
+              "real day fabricated")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Same class again, through the SPINE path (MAJOR, not blocking: nothing
+    # is destroyed here, the spine is derived). {"spine": "sub/SPINE.md"} with
+    # "sub" a dangling symlink read as "the spine is empty" before this fix,
+    # degrading every command silently rather than naming the break. (Vega.)
+    td = Path(tempfile.mkdtemp(prefix="vardemem-spinesymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        (td / CONFIG_NAME).write_text(
+            '{"journal": "history", "spine": "sub/SPINE.md"}', encoding="utf-8")
+        (jdir / "sub").symlink_to(jdir / "nowhere")
+        rc, out = _run(jdir, "read")
+        check(rc == 1 and "Cannot locate a journal" not in out
+              and "Could not read the spine" in out,
+              "a spine path threaded through a dangling intermediate "
+              "symlink refuses, not just reports an empty spine")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # subagent class-completion sweep: _present (used by journal_files, the
+    # read/write path for individual day files) never got the discrimination
+    # _day_files did. A dangling DAY-FILE symlink made journal_dates()
+    # (os.listdir, lists the link name) and journal_files() (_present,
+    # follows and fails) disagree: missing named the day forever, draft/put
+    # refused it forever, and neither said why.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-presentsymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        (td / CONFIG_NAME).write_text('{"journal": "history"}', encoding="utf-8")
+        (jdir / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n## Rollups\n\n", encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (jdir / "journal-2026-01-01.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "draft", "2026-01-01")
+        check(rc == 1 and "No journal for" not in out
+              and "Could not reach" in out,
+              "a dangling day-file symlink refuses by name, not as "
+              "'no journal for' a day that genuinely has one")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The write side (_present, via journal_files/draft/put) refused a
+    # dangling day-file symlink; the listing side journal_dates() (which
+    # `missing` reads) did not, so `missing` reported the spine "current"
+    # over a day whose only journal file was this exact dangling link.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-missingsymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        (td / CONFIG_NAME).write_text('{"journal": "history"}', encoding="utf-8")
+        (jdir / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-01-01 | x\n\n## Rollups\n\n",
+            encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (jdir / "journal-2026-01-01.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "missing")
+        check(rc == 1 and "current" not in out
+              and "Could not reach" in out,
+              "missing refuses on a dangling day-file symlink too, not "
+              "'current' over a link with nothing behind it")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The archive call passes prefix="", so a dangling non-date name (a
+    # stray README, migration leftovers) must not take `missing` down over
+    # files that were never a journal day. Positive, not just negative:
+    # three real archive days alongside the junk prove they were actually
+    # walked and counted, not that the archive went unread.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-archivejunk-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        arc = jdir / "archive"
+        arc.mkdir()
+        (td / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "archive": "archive"}),
+            encoding="utf-8")
+        (jdir / "SPINE.md").write_text("# Spine\n\n## Days\n\n## Rollups\n\n",
+                                        encoding="utf-8")
+        for day in ("2026-01-02", "2026-01-03", "2026-01-04"):
+            (arc / ("%s.md" % day)).write_text("# day", encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (arc / "README.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "missing")
+        check(rc == 0 and "Could not reach" not in out
+              and "3 day(s) with a journal and no spine line" in out,
+              "a dangling .md name in the archive that was never a day "
+              "file does not block missing over unrelated real days")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The journal-directory case above never exercises the archive loop's own
+    # _present call. A dangling REAL day in the archive is the same
+    # disagreement, just through the archive's door.
+    td = Path(tempfile.mkdtemp(prefix="vardemem-archivesymlink-"))
+    try:
+        jdir = td / "history"
+        jdir.mkdir()
+        arc = jdir / "archive"
+        arc.mkdir()
+        (td / CONFIG_NAME).write_text(
+            json.dumps({"journal": "history", "archive": "archive"}),
+            encoding="utf-8")
+        (jdir / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-01-01 | x\n\n## Rollups\n\n",
+            encoding="utf-8")
+        real = td / "real.md"
+        real.write_text("x", encoding="utf-8")
+        (arc / "2026-01-01.md").symlink_to(real)
+        real.unlink()
+        rc, out = _run(jdir, "missing")
+        check(rc == 1 and "current" not in out
+              and "Could not reach" in out,
+              "missing refuses on a dangling day-file symlink in the "
+              "archive too, the same as one in the journal directory")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Same sweep, second finding: _day_files's NotADirectoryError branch only
+    # checked islink/_broken_ancestor, both of which fired only for the
+    # ENOENT shapes. An archive path that IS a regular file (a botched
+    # migration moved the real directory aside and left a file) triggered
+    # neither, fell through to "empty", and called a real archived day
+    # fabricated at exit 0.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        arc = jdir / "archive"
+        shutil.rmtree(arc)
+        arc.write_text("oops, a migration left this", encoding="utf-8")
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "an archive path that is a regular file refuses, and does "
+              "not call a real day fabricated")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Third shape of the same finding: the ANCESTOR of the archive path, not
+    # the leaf, is a plain regular file blocking traversal. _broken_ancestor
+    # originally checked only for a dangling SYMLINK ancestor; broadened to
+    # also catch a live non-directory ancestor, since NotADirectoryError
+    # cannot tell the two apart and neither can a caller reading exit 0.
+    td, jdir, spine_md = _mkroot([], ndays=1)
+    try:
+        shutil.rmtree(jdir / "archive")
+        (jdir / "blocker").write_text("blocks traversal", encoding="utf-8")
+        (Path(td) / CONFIG_NAME).write_text(
+            '{"journal": "history", "archive": "blocker/archive"}',
+            encoding="utf-8")
+        rc, out = _run(jdir, "missing")
+        check(rc != 0 and "Could not list" in out
+              and "fabricated line" not in out,
+              "an archive path blocked by a non-directory ancestor "
+              "refuses, and does not call a real day fabricated")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # The failure named a "spine" key against configs that do not set one.
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        spine_md.write_bytes(b"# Spine\n\n## Days\n\n2026-01-01 | \xff\n")
+        rc, out = _run(jdir, "read")
+        check(rc != 0 and '"spine" in' not in out,
+              "an unset spine key is not named in the failure that mentions it")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # "No journal here" gets its OWN exit code, so a caller can stay quiet for
+    # a tree that never had a spine and still be loud about a real failure.
+    # Everything else keeps exit 1.
+    outside = Path(tempfile.mkdtemp(prefix="vardemem-nojournal-"))
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        rc, out = _run(outside, "read")
+        check(rc == EXIT_NO_JOURNAL, "no journal anywhere exits EXIT_NO_JOURNAL")
+        (Path(td) / CONFIG_NAME).write_text('{"spine": "S.md"}', encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == EXIT_NO_JOURNAL, "a config with no journal key does too")
+        # Vega's review, coverage gap: $AGENT_VAULT unset (above) and
+        # $AGENT_VAULT pointing at a tree with no config of its own are
+        # different branches in _resolve_root -- the second still has to
+        # fall out through _read_config's own FileNotFoundError, which nothing
+        # here exercised, and is exactly the seam the env-fallback fix above
+        # lives next to.
+        vault_empty = Path(tempfile.mkdtemp(prefix="vardemem-vaultempty-"))
+        try:
+            rc, out = _run(outside, "read", root=vault_empty)
+            check(rc == EXIT_NO_JOURNAL,
+                  "$%s pointing to a tree with no config also exits "
+                  "EXIT_NO_JOURNAL" % ROOT_ENV)
+        finally:
+            shutil.rmtree(vault_empty, ignore_errors=True)
+        # And the other half: journal KEY present and valid, but the
+        # directory it names was simply never created -- no symlink, nothing
+        # blocking it, just absent. Must land on the same quiet code as
+        # above, and must NOT be conflated with the broken-route cases
+        # (permissions, dangling symlinks) exercised elsewhere, which are
+        # exit 1.
+        (Path(td) / CONFIG_NAME).write_text('{"journal": "nonexistent"}',
+                                             encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == EXIT_NO_JOURNAL,
+              "a configured journal directory that was never created also "
+              "exits EXIT_NO_JOURNAL")
+        (Path(td) / CONFIG_NAME).write_text("{not json", encoding="utf-8")
+        rc, out = _run(jdir, "read")
+        check(rc == 1, "a malformed config is a real refusal, exit 1")
+        # A config that cannot be READ is the same kind of answer as one that
+        # cannot be parsed. Widening that OSError to the quiet code had nothing
+        # to catch it. (North.)
+        cfg = Path(td) / CONFIG_NAME
+        cfg.write_text('{"journal": "history"}', encoding="utf-8")
+        os.chmod(cfg, 0o000)
+        rc, out = _run(jdir, "read")
+        os.chmod(cfg, 0o644)
+        check(rc == 1 and "Could not read" in out,
+              "an unreadable config is a real refusal too, not the quiet code")
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
+        shutil.rmtree(td, ignore_errors=True)
+
     for label, text, want in (
             ("an absolute path", '{"journal": "/tmp/elsewhere"}',
              "under its base"),
@@ -2609,6 +3520,179 @@ def cmd_selftest(args):
                   "%s is refused, naming the file and %s" % (label, want))
         finally:
             shutil.rmtree(td, ignore_errors=True)
+
+    # The trust gate on the walk: a public, installable tool that auto-reads
+    # whatever `.vardemem.json` the WALK finds has no way to tell a repo the
+    # operator actually put a journal in from any other repo that merely
+    # happens to be open. An untrusted candidate with a real config must be
+    # treated the same as one with none -- not refused outright, just not
+    # trusted -- so the walk (or $AGENT_VAULT) can still answer past it.
+    outer_td = Path(tempfile.mkdtemp(prefix="vardemem-trustgate-"))
+    try:
+        # SIBLINGS, deliberately, not nested: trusting a root cascades to
+        # its whole subtree by design (the same way trusting a checkout
+        # trusts every file in it), so a directory NESTED under a trusted
+        # root is trusted too, on purpose -- that is not this gate's
+        # question. The question is a repo that is not under any trusted
+        # root at all.
+        untrusted_dir = outer_td / "untrusted-repo"
+        untrusted_dir.mkdir()
+        (untrusted_dir / CONFIG_NAME).write_text('{"journal": "history"}',
+                                                   encoding="utf-8")
+        (untrusted_dir / "history").mkdir()
+        (untrusted_dir / "history" / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-01-01 | untrusted\n\n## Rollups\n\n",
+            encoding="utf-8")
+        trusted_dir = outer_td / "trusted-vault"
+        trusted_dir.mkdir()
+        (trusted_dir / CONFIG_NAME).write_text('{"journal": "history"}',
+                                                 encoding="utf-8")
+        (trusted_dir / "history").mkdir()
+        (trusted_dir / "history" / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-02-02 | trusted\n\n## Rollups\n\n",
+            encoding="utf-8")
+
+        trust_cfg = Path(tempfile.mkdtemp(prefix="vardemem-trustgate-cfg-"))
+        (trust_cfg / "empty.json").write_text("[]", encoding="utf-8")
+        (trust_cfg / "trusted.json").write_text(
+            json.dumps([str(trusted_dir.resolve())]), encoding="utf-8")
+
+        rc, out = _run(untrusted_dir, "read",
+                        trust=str(trust_cfg / "empty.json"))
+        check(rc == EXIT_NO_JOURNAL,
+              "an untrusted cwd with a real config is walked past, not "
+              "read, when nothing else answers")
+        # North, round 8: the message above used to be indistinguishable
+        # from "genuinely nothing found anywhere", which is false here -- a
+        # real check ran and found a real config, just not a trusted one.
+        check(CONFIG_NAME in out and str(untrusted_dir.resolve()) in out
+              and "no .vardemem.json in the current directory" not in out,
+              "the message names the config it found and declined, not "
+              "the generic never-found-anything text")
+        rc, out = _run(untrusted_dir, "read",
+                        trust=str(trust_cfg / "trusted.json"))
+        check(rc == EXIT_NO_JOURNAL,
+              "a config file listing a DIFFERENT trusted root does not "
+              "trust this one -- trust is not all-or-nothing once any "
+              "entry exists")
+        rc, out = _run(trusted_dir, "read",
+                        trust=str(trust_cfg / "trusted.json"))
+        check(rc == 0 and "2026-02-02" in out,
+              "a cwd that IS the trusted root reads its own journal")
+
+        env_td, env_jdir, env_spine = _mkroot([], ndays=1)
+        try:
+            rc, out = _run(untrusted_dir, "read", root=env_td,
+                            trust=str(trust_cfg / "empty.json"))
+            check(rc == 0 and "1 days" in out,
+                  "$%s answers on its own merits from an untrusted cwd -- "
+                  "the gate only touches the walk, never the env" % ROOT_ENV)
+        finally:
+            shutil.rmtree(env_td, ignore_errors=True)
+
+        # North, round 8, blocking 2: before the gate, a `d` on the walk
+        # that HELD the journal layout could never also hold a real config
+        # of its own -- the walk would already have claimed it. The gate
+        # breaks that invariant, and the wrong-tree warning's hardcoded
+        # "declares no .vardemem.json" became false for this one new case.
+        worktree_td, worktree_j, _ = _mkroot([], ndays=1, journal="history")
+        env_td, env_jdir, env_spine = _mkroot([], ndays=1, journal="history")
+        try:
+            rc, out = _run(worktree_td, "read", root=env_td,
+                            trust=str(trust_cfg / "empty.json"))
+            check("has its own %s" % CONFIG_NAME in out
+                  and "declares no %s" % CONFIG_NAME not in out,
+                  "the wrong-tree warning names an untrusted tree's REAL "
+                  "config, not the old claim that none exists")
+            check("trusted-roots list" in out,
+                  "and points at the trusted-roots list as the actual "
+                  "remedy, not a config file that's already there")
+        finally:
+            shutil.rmtree(env_td, ignore_errors=True)
+            shutil.rmtree(worktree_td, ignore_errors=True)
+
+        # North, round 8, nit: $VARDEMEM_TRUST_FILE resolving a RELATIVE
+        # override against cwd would let the walk target supply its own
+        # trust list -- the one path this mechanism did not already
+        # require to be absolute, unlike every entry inside the file.
+        self_naming = outer_td / "self-naming"
+        self_naming.mkdir()
+        (self_naming / CONFIG_NAME).write_text('{"journal": "history"}',
+                                                 encoding="utf-8")
+        (self_naming / "history").mkdir()
+        (self_naming / "history" / "SPINE.md").write_text(
+            "# Spine\n\n## Days\n\n2026-03-03 | x\n\n## Rollups\n\n",
+            encoding="utf-8")
+        (self_naming / "mytrust.json").write_text(
+            json.dumps([str(self_naming.resolve())]), encoding="utf-8")
+        env2 = dict(os.environ)
+        env2.pop(ROOT_ENV, None)
+        env2["VARDEMEM_TRUST_FILE"] = "mytrust.json"
+        p = subprocess.run([sys.executable, __file__, "read"],
+                            capture_output=True, text=True,
+                            cwd=str(self_naming), env=env2)
+        check(p.returncode == EXIT_NO_JOURNAL,
+              "a relative $%s cannot let a repo name itself trusted"
+              % TRUST_FILE_ENV)
+    finally:
+        shutil.rmtree(outer_td, ignore_errors=True)
+        shutil.rmtree(trust_cfg, ignore_errors=True)
+
+    # Vega's review, coverage gap: Ctrl-C during a real run must exit 130,
+    # and nothing proved it. Spawning `read` directly and racing a signal
+    # against it does not prove it either: a throwaway fixture finishes in a
+    # few milliseconds, so a signal sent right after spawn as often lands
+    # after exit as during the run, and check_reached above exists precisely
+    # because a probe that never reaches what it claims to test still shows
+    # green. Route the child through a real import instead of __main__ so
+    # the driver can swap in a version of _run that blocks on a genuinely
+    # interruptible call (time.sleep) and prints once it is inside main()'s
+    # try, giving the parent a synchronization point instead of a guess.
+    # runpy.run_path was tried first and does not work here: it returns a
+    # COPY of the exec'd namespace, so main.__globals__ stays wired to the
+    # internal dict runpy discards, and a rebind on the copy is invisible to
+    # main()'s own lookup of _run. A real module object keeps one dict for
+    # both, so the rebind and the lookup agree.
+    #
+    # The loader must be passed explicitly, not left for spec_from_file_location
+    # to infer from the extension: __file__ is whatever path Python was invoked
+    # with, and the README's own documented install is an EXTENSIONLESS symlink
+    # (`ln -s .../vardemem.py ~/.local/bin/vardemem`). Through that symlink the
+    # extension-sniffing form returns spec=None, module_from_spec(None) raises,
+    # and this check fails on every tool installed exactly as documented --
+    # while every other check passes through that same symlink, because they
+    # spawn __file__ as a subprocess argument, which needs no loader at all.
+    # (North, round 4: caught on the installed path, not the direct one.)
+    driver = (
+        "import importlib.machinery, importlib.util, time\n"
+        "p = %r\n"
+        "spec = importlib.util.spec_from_file_location("
+        "'vardemem_sigint_driver', p,\n"
+        "    loader=importlib.machinery.SourceFileLoader("
+        "'vardemem_sigint_driver', p))\n"
+        "mod = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(mod)\n"
+        "mod._run = lambda: (print('READY', flush=True), time.sleep(30))\n"
+        "mod.main()\n"
+    ) % __file__
+    # -B: SourceFileLoader compiles and caches bytecode on import like any
+    # other import, and the install this loads through is the operator's OWN
+    # ~/.local/bin, not this repo (whose checked-out copy .gitignore already
+    # covers). selftest should not leave a __pycache__ in a directory it does
+    # not own. (Vega.)
+    p = subprocess.Popen([sys.executable, "-B", "-c", driver],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          text=True)
+    ready = p.stdout.readline()
+    p.send_signal(signal.SIGINT)
+    try:
+        rc = p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+        rc = None
+    check(ready.strip() == "READY" and rc == 130,
+          "Ctrl-C during a run exits 130, not a bare traceback")
 
     print("\n%s" % ("ALL PASS" if not fails else "%d FAILED" % len(fails)))
     sys.exit(1 if fails else 0)
@@ -2651,9 +3735,17 @@ def _run():
         sys.exit(1 if len(sys.argv) > 1 else 0)
     if sys.argv[1] == "selftest":
         return COMMANDS["selftest"](sys.argv[2:])   # reads no journal file
-    if not journal_dir().is_dir():
+    is_dir, unreachable = _dir_state(journal_dir())
+    if unreachable is not None:
+        # NOT the no-journal code. A journal that cannot be reached is a real
+        # failure, and EXIT_NO_JOURNAL is the code a session-start caller goes
+        # silent on, so answering it here hides an unreadable journal from
+        # every hook that keys on it. (North, #2 round 2.)
+        die("Could not reach the journal at %s: %s"
+            % (journal_dir(), unreachable))
+    if not is_dir:
         die('No journal at %s ("journal" in %s).'
-            % (journal_dir(), config_path()))
+            % (journal_dir(), config_path()), EXIT_NO_JOURNAL)
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 

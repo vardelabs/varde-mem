@@ -54,13 +54,29 @@ Symlink the journal **directory**, never the `spine` file. The index is written 
 
 ### How the root is found
 
-1. Walk up from the **current directory** for `.vardemem.json`. The first one found wins, and the directory holding it is the root.
-2. Only if that finds nothing, read **`$AGENT_VAULT`** and look for the config at its root.
-3. Otherwise refuse, naming both.
+1. Walk up from the **current directory** for `.vardemem.json`, considering only a directory on the **trusted-roots list** below (or one nested under one). The first trusted match wins, and the directory holding it is the root. An untrusted directory with its own real config is treated the same as one with none: the walk continues past it rather than stopping there. An ancestor along the walk that cannot even be checked (permissions, a broken symlink) stops the walk and refuses right there instead of falling through to step 2: it might be hiding the real config, and guessing past it is worse than refusing. A current directory that no longer exists (a worktree removed out from under a live shell) skips this step entirely rather than refusing here: there is nothing to walk from, which is not the same as walking and finding nothing.
+2. If step 1 found nothing checkable (or nothing trusted), or never ran, read **`$AGENT_VAULT`** and look for the config at its root. The same rule applies here too: a config that exists but cannot be checked refuses rather than reporting no journal. **The trusted-roots list does not apply here**: setting `$AGENT_VAULT` is itself the operator's explicit choice, the same as naming a root directly.
+3. Otherwise refuse. A deleted current directory says so by name; every other case names both places checked.
 
 **The order is load-bearing.** `$AGENT_VAULT` names where a session started, which is not where the caller is working: one variable set to a primary checkout wrote a day line into the wrong tree from a worktree session, silently and at exit 0. The tree you are standing in knows which journal you mean. Because the config file is checked in, every worktree carries its own copy without anyone copying anything.
 
 Whichever of the two answers, VardeMem then warns on stderr if the current directory sits inside a **different** tree that holds the same journal layout and declares no config of its own. That is the case above: a checkout that says nothing is not a checkout that agrees with its neighbour. It warns and proceeds rather than refusing, because the read runs at session start and a refusal there turns "wrong tree, and you were told" into "no history at all".
+
+### Trusting a repo for auto-discovery
+
+The walk in step 1 runs automatically, with no per-session confirmation -- opening any repo that happens to carry a `.vardemem.json` would otherwise auto-read and print whatever it names as a journal, whether that repo is one you put a journal in or one you merely have open for an unrelated reason. The walk only ever considers a directory on the **trusted-roots list**:
+
+```
+~/.config/vardemem/trust.json
+```
+
+```json
+["/Users/kai/Repos/corvus-vault", "/Users/kai/Repos/varde-vault"]
+```
+
+A flat JSON list of absolute paths. Trusting a root trusts its whole subtree, the same as trusting a checkout trusts every file in it -- list the narrowest root you actually control, not a parent directory that also holds other people's repos. No file, an empty list, or a malformed one all mean the walk trusts nothing (not everything): the tool falls straight through to `$AGENT_VAULT`, or refuses, exactly as if the current tree had no config at all. Override the path itself with **`$VARDEMEM_TRUST_FILE`**, for an install that keeps its config somewhere else.
+
+This list is read from the PASSWD ENTRY's home directory, never `$HOME`: an untrusted repo's own `.envrc` or devcontainer config can set `$HOME` before this tool ever runs, and a value the walk target itself could set is not a boundary at all. `$VARDEMEM_TRUST_FILE` is exempt from that concern -- setting it is no more reachable to an untrusted tree than setting `$AGENT_VAULT` already is.
 
 ## Install
 
@@ -93,6 +109,32 @@ ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
 | `selftest` | Property checks for the index arithmetic and the configuration layer. Needs no journal. |
 
 `selftest` is the safety net. It runs from any directory, touches no real journal, and builds its own throwaway trees.
+
+### Exit codes
+
+| Code | Means |
+| --- | --- |
+| 0 | The command did what it says. |
+| 1 | A failure, named on stderr. Usage errors are exit 1 too; there is no separate usage code. |
+| 3 | There is no journal to read: the walk from the current directory completed with no config found and `$AGENT_VAULT` unset, `$AGENT_VAULT` names a tree with no config, the config does not set `journal`, or it does and the named path is absent or is not a directory. |
+| 130 | Interrupted (Ctrl-C). |
+
+`3` exists so a caller that runs this at every session start can stay quiet in a
+tree that never had a journal, and stay loud about everything else. It means a
+real check ran and the journal genuinely is not there; anything that could not
+be checked at all -- a journal that IS configured but cannot be reached
+(permissions, a broken symlink, a non-directory ancestor blocking the path), or
+a current directory that no longer exists WITH `$AGENT_VAULT` also unset, so
+nothing was checked anywhere -- is exit 1, same as any other failure. A deleted
+current directory alone does not force exit 1: `$AGENT_VAULT`, when set,
+answers on its own merits regardless of cwd, so it still returns 0 or 3 exactly
+as it would from a healthy cwd. A caller that treats any non-zero code as
+"nothing to show" hides those; key the silence on `3` alone.
+
+The stderr promise on `1` is for the tool's own failures. `selftest` is a report
+a human or CI reads, not a single error, so its per-check lines, including any
+`FAIL` line, print to stdout along with everything else it prints; only its
+final exit code is the pass/fail signal, the same as any other command.
 
 ## Provenance
 
