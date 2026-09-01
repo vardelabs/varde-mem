@@ -24,8 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Full history so the event's commit range resolves. No LFS smudge:
-          # pointers are rejected by signature below, not read.
+          # Full history so the event's commit range resolves. No LFS smudge: the
+          # object is never fetched; the pointer blob is matched by signature below.
           fetch-depth: 0
       - name: Reject journal or index files in any introduced commit
         env:
