@@ -1,25 +1,15 @@
 name: no-journal-content
 
-# Guard the STRUCTURED history artifacts (see the Public-ready rule in
-# README.md) in every commit this event introduces, not just the tip: the
-# journal day files, and the derived index in any location or under any
-# configured name. A file added in one commit and removed in a later one stays
-# reachable in history, so a tip-only scan would pass it; #164 requires the whole
-# history safe, not the tip. .gitignore guards against an accidental `git add`;
-# this job guards against a deliberate `git add -f`, including one a later commit
-# hides. This repository uses no Git LFS and no submodules, so any LFS pointer or
-# submodule gitlink in an introduced commit is rejected outright: an LFS object
-# and a separate submodule repository both hide content the ordinary scans cannot
-# read. It is not a general content classifier: raw journal prose pasted into an
-# arbitrarily named file has no stable signature, and evasion through other
-# non-default git machinery is out of its reach; the pre-PR diff read in
-# CONTRIBUTING.md is the control for both. selftest builds its own throwaway
-# trees at runtime and commits no journal-named fixtures, so a blanket reject
-# never collides with the tests.
-#
-# This is a safety invariant, not a test, so it runs on push as well as on
-# pull_request: a direct push that never opens a PR must not slip a journal or
-# index file past a PR-only gate.
+# Reject the STRUCTURED history artifacts (Public-ready rule, README.md) in every
+# commit the event introduces, not just the tip: a file added then removed stays
+# reachable, so a tip-only scan would pass it (#164 wants the whole history safe).
+# .gitignore stops an accidental `git add`; this stops a deliberate `git add -f`,
+# including one a later commit hides. The repo uses no LFS and no submodules, so a
+# Git LFS pointer or a gitlink is rejected outright (both hide content the scans
+# cannot read). It is not a content classifier: raw journal prose in an
+# arbitrarily named file has no stable signature, and the pre-PR diff read
+# (CONTRIBUTING.md) is the control there. It runs on push as well as pull_request,
+# so a direct push cannot slip a file past a PR-only gate.
 
 permissions:
   contents: read
@@ -34,9 +24,8 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Full history so the commits this event introduces can be enumerated
-          # and each scanned. No LFS smudge is needed: LFS pointers are rejected
-          # by signature below, not materialized and read.
+          # Full history so the event's commit range resolves. No LFS smudge: the
+          # object is never fetched; the pointer blob is matched by signature below.
           fetch-depth: 0
       - name: Reject journal or index files in any introduced commit
         env:
@@ -48,12 +37,9 @@ jobs:
           set -euo pipefail
           empty=$(git hash-object -t tree /dev/null)
 
-          # The commits this event introduces. A pull_request compares its base to
-          # its head; a push compares the event's `before` to its head. A missing
-          # or all-zero base (a new branch, the first push) means "no prior
-          # commits", so compare against the empty tree and examine every
-          # reachable commit. If the base object is absent (a force-push rewrote
-          # it away), fall back to the empty tree rather than fail to resolve.
+          # The commits this event introduces (push: before..head; PR: base..head).
+          # A missing, all-zero, or absent base (new branch, first push, or a base a
+          # force-push rewrote away) falls back to the empty tree: scan everything.
           if [ "${EVENT:-}" = "pull_request" ]; then
             base="${PR_BASE:-}"; head="${PR_HEAD:-HEAD}"
           else
@@ -64,19 +50,17 @@ jobs:
             base="$empty"
           fi
           commits=$(git rev-list "${base}..${head}")
-          # An empty range (head already an ancestor of base, e.g. a no-op push)
-          # would scan nothing; examine the head commit itself instead.
+          # An empty range (head already an ancestor of base) would scan nothing;
+          # examine the head commit itself instead.
           [ -n "$commits" ] || commits="$head"
 
           pattern='(^|/)(journal-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md|[0-9]{4}-[0-9]{2}-[0-9]{2}\.md|SPINE\.md|\.vardemem\.json|\.spine\.lock|.+\.md\.tmp.*)$'
           spine_header='^> Decayed index over the journal\. One line per recorded day'
           lfs_pointer='^version https://git-lfs\.github\.com/spec/v1'
 
-          # NUL-delimited so a pathname holding a newline (a legal, config-reachable
-          # journal directory name) stays one record. --name-only for the name
-          # scan (anchor `^` must sit at the path start, not before the tree
-          # metadata); the full record for the gitlink mode check. A git failure
-          # here aborts the step (fail closed).
+          # NUL-delimited so a newline in a path (a legal, config-reachable journal
+          # dir name) stays one record. --name-only puts `^` at the path start; the
+          # full record carries the mode for the gitlink check. A git failure aborts.
           names=$(mktemp)
           trap 'rm -f "${names:-}" "${modes:-}"' EXIT
           modes=$(mktemp)
@@ -85,17 +69,14 @@ jobs:
             git ls-tree -r -z "$c" >> "$modes"
           done
 
-          # Decide with grep's exit status only (no capture of NUL-delimited
-          # output, which would warn and be stripped anyway). `grep -q` reads a
-          # file here, not a pipe, so its early exit cannot SIGPIPE a producer.
-          # `git grep` reads the introduced commits' objects. The content scan
-          # matches the spine's fixed header line, which interpolates no configured
-          # path and so cannot be split by any journal name and is anchored so it
-          # matches neither the tool's split source nor this workflow nor prose
-          # that mentions it. The LFS scan matches a Git LFS pointer, since a
-          # custom-named index stored via LFS is a pointer here, not readable
-          # content. Exit 0 is a hit, 1 is no hit, > 1 is a real error and fails
-          # closed.
+          # Decide by exit status, not captured output (NUL output would warn and be
+          # stripped). `grep -q` reads a file, not a pipe, so it cannot SIGPIPE a
+          # producer. The content scan matches the spine's fixed header line: no
+          # interpolated path, so no journal name splits it, and `^`-anchored, so the
+          # tool's own source that writes the header (indented, not at column 0) and
+          # this workflow do not match. The LFS scan matches a pointer, since a
+          # custom-named LFS index is a pointer here. Exit > 1 (a real error, not
+          # "no match") fails closed.
           set +e
           grep -zqaE "$pattern" "$names"; nrc=$?
           grep -zqaE '^160000 ' "$modes"; grc=$?
