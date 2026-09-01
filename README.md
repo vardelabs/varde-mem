@@ -2,7 +2,7 @@
 
 > Persistent memory for a long-running agent, at a fixed reading cost. One file of Python 3, standard library only, no dependencies.
 
-An agent that runs for months piles up more history than it can afford to re-read at the start of every session. VardeMem keeps a **decayed index** over a directory of per-day journal files: recent days stay verbatim, and the older a stretch gets, the fewer lines it keeps, folding a week, then a month, then a quarter into a single line. One read covers all of history within a fixed line budget, however long the history grows.
+An agent that runs for months piles up more history than it can afford to re-read at the start of every session. VardeMem keeps a **decayed index** over a directory of per-day journal files: recent days stay verbatim, and the older a stretch gets, the fewer lines it keeps, folding a week, then a month, then a quarter into a single line. One read covers all of history within a fixed line budget, however long the history grows; you keep it that cheap by writing a rollup or two per session.
 
 The index is **derived**. Every line comes from a journal file, the journals are never edited, and the index rebuilds from the journal directory alone. A wrong line is a re-summarize, never a lost memory.
 
@@ -97,14 +97,14 @@ Each path stays under its own base: no absolute paths, no `..`. To keep a journa
 ["/path/to/your/first-tree", "/path/to/your/second-tree"]
 ```
 
-If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it is set (naming that variable is itself an explicit choice, so the trust list does not gate it); otherwise it reports that there is no journal. By default the trust file is read from your passwd-entry home, not `$HOME`, so a repo you merely have open cannot redirect the tool at itself.
+If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it is set; otherwise it reports that there is no journal. The trust decision lives in your environment, which is operator input. `$AGENT_VAULT` names a root directly, and `$VARDEMEM_TRUST_FILE` overrides where the trusted-roots list is read from; its default, `~/.config/vardemem/trust.json`, is taken from your passwd entry rather than `$HOME`, so a reset `$HOME` cannot move it. A repo you merely open sets none of these, so it cannot redirect the tool at itself; a repo whose shell hooks you have allowed to set your environment already can, like any program you let configure your shell.
 
 ## Exit codes
 
 | Code | Means |
 | --- | --- |
 | `0` | The command did what it says. |
-| `1` | A failure, named on stderr. |
+| `1` | A failure, named on stderr (except `selftest`, which prints its own report to stdout). |
 | `3` | No journal to read: no configured journal resolved. Either nothing trusted answered and `$AGENT_VAULT` is unset, or the tree that answered sets no `journal` key or points at a journal directory that is not there. Distinct from `1` so a session-start caller can stay quiet where there was never a journal, and loud everywhere else. |
 | `130` | Interrupted (Ctrl-C). |
 
