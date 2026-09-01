@@ -11,8 +11,8 @@ One file, `vardemem.py`, standard library only. No install step, no build, no de
 ## Scope
 
 - **The index.** One line per recorded day, rollups above them, and the arithmetic that decides which blocks a bounded read prints.
-- **The write ritual.** `put` records a day, `due` names the next rollup the read needs, `roll` writes it. The read stays bounded only while those rollups get written.
-- **Damage tolerance.** A git conflict, a hand edit, or a merge that changes the day set under a rollup is detected and named, and the read degrades to printing more lines rather than failing.
+- **The write ritual.** `put` records a day, `due` names the next rollup the read needs, `roll` writes it. The read is always bounded; it keeps reaching all of history only while those rollups get written.
+- **Damage tolerance.** A git conflict, a hand edit, or a merge that changes the day set under a rollup is detected and named, and the read degrades to less compressed lines, withholding the oldest past the budget, rather than failing.
 - **Configuration.** Journal paths and root discovery are configuration, so more than one tree can use the same tool.
 
 ## Non-goals
@@ -135,6 +135,14 @@ The stderr promise on `1` is for the tool's own failures. `selftest` is a report
 a human or CI reads, not a single error, so its per-check lines, including any
 `FAIL` line, print to stdout along with everything else it prints; only its
 final exit code is the pass/fail signal, the same as any other command.
+
+## The write ritual
+
+The read at session start covers all of history within a fixed line budget only because the write at session end keeps the rollups current. The read is always bounded; the rollups are what let that bounded read still cover the whole past instead of only the recent tail. `due` names the next rollup the read needs, smallest first; `roll` records each one; `put` records the day. Skip the write every session and the index decays toward one line per day, which is the read the rollups exist to avoid. Two rules keep the write bounded and its history clean.
+
+**Write at most five rollups per session.** This is a convention the operator keeps, not a limit the tool enforces: nothing stops at five. `due` names the next owed rollup and the count still behind it, `roll` writes that one, and the pair will walk the whole queue if you keep running them. Normal accrual sits far below the cap. Most sessions owe nothing, and even an old spine owes only a handful at a time as it grows. The cap is not sized for that case; it is sized for one event that owes far more at once: backfilling a day older than the whole spine. An insert at the front shifts every index by one, so every aligned block now covers a different span of days, and every rollup in the tree is invalidated at once. On a 400-day spine that is 73 rollups owed in a single session (measured). The cap bounds the session-end write so a jump like that never turns one session into a summarizing marathon. Clear five, let the rest re-accrue over later sessions. The read stays usable meanwhile: a missing rollup never breaks it. The read shows that stretch less compressed instead, and when that overflows the budget it withholds the oldest and names the range it dropped, so it stays bounded and honest rather than failing.
+
+**Same-day writes conflict only across divergent copies.** On one POSIX host an exclusive file lock serializes two writers: the second waits, re-reads the updated index, and rewrites only its own day line, so the later write wins that day with no lost update. (The lock needs `fcntl`; where the platform has none the two can race, and the fleet is Linux and macOS.) A real conflict needs two checkouts that have diverged, two worktrees or two tenants sharing a journal, both recording new days; a later `git merge` then finds it. Date-keying does not prevent the conflict, it localizes it, so the diff is readable and the resolution is obvious. Two different days that landed at the same spot in the file just sort back into order, both kept. The case that needs a choice is the same day recorded twice, and the choice depends on the file that clashed. The index (`SPINE.md`) is derived, so a conflicted index line is resolved by keeping either side or re-summarizing the day: the journal is the source and nothing is lost. A journal day file is real append-only history, so the same day recorded twice is two sets of entries and the resolution is to keep both; dropping a side drops memory that re-summarizing cannot recover.
 
 ## Provenance
 
