@@ -1,0 +1,120 @@
+name: no-journal-content
+
+# Guard the STRUCTURED history artifacts (see the Public-ready rule in
+# README.md) in every commit this event introduces, not just the tip: the
+# journal day files, and the derived index in any location or under any
+# configured name. A file added in one commit and removed in a later one stays
+# reachable in history, so a tip-only scan would pass it; #164 requires the whole
+# history safe, not the tip. .gitignore guards against an accidental `git add`;
+# this job guards against a deliberate `git add -f`, including one a later commit
+# hides. This repository uses no Git LFS and no submodules, so any LFS pointer or
+# submodule gitlink in an introduced commit is rejected outright: an LFS object
+# and a separate submodule repository both hide content the ordinary scans cannot
+# read. It is not a general content classifier: raw journal prose pasted into an
+# arbitrarily named file has no stable signature, and evasion through other
+# non-default git machinery is out of its reach; the pre-PR diff read in
+# CONTRIBUTING.md is the control for both. selftest builds its own throwaway
+# trees at runtime and commits no journal-named fixtures, so a blanket reject
+# never collides with the tests.
+#
+# This is a safety invariant, not a test, so it runs on push as well as on
+# pull_request: a direct push that never opens a PR must not slip a journal or
+# index file past a PR-only gate.
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Full history so the commits this event introduces can be enumerated
+          # and each scanned. No LFS smudge is needed: LFS pointers are rejected
+          # by signature below, not materialized and read.
+          fetch-depth: 0
+      - name: Reject journal or index files in any introduced commit
+        env:
+          EVENT: ${{ github.event_name }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          empty=$(git hash-object -t tree /dev/null)
+
+          # The commits this event introduces. A pull_request compares its base to
+          # its head; a push compares the event's `before` to its head. A missing
+          # or all-zero base (a new branch, the first push) means "no prior
+          # commits", so compare against the empty tree and examine every
+          # reachable commit. If the base object is absent (a force-push rewrote
+          # it away), fall back to the empty tree rather than fail to resolve.
+          if [ "${EVENT:-}" = "pull_request" ]; then
+            base="${PR_BASE:-}"; head="${PR_HEAD:-HEAD}"
+          else
+            base="${PUSH_BEFORE:-}"; head="${GITHUB_SHA:-HEAD}"
+          fi
+          case "$base" in ''|0000000000000000000000000000000000000000) base="$empty" ;; esac
+          if [ "$base" != "$empty" ] && ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            base="$empty"
+          fi
+          commits=$(git rev-list "${base}..${head}")
+          # An empty range (head already an ancestor of base, e.g. a no-op push)
+          # would scan nothing; examine the head commit itself instead.
+          [ -n "$commits" ] || commits="$head"
+
+          pattern='(^|/)(journal-[0-9]{4}-[0-9]{2}-[0-9]{2}\.md|[0-9]{4}-[0-9]{2}-[0-9]{2}\.md|SPINE\.md|\.vardemem\.json|\.spine\.lock|.+\.md\.tmp.*)$'
+          spine_header='^> Decayed index over the journal\. One line per recorded day'
+          lfs_pointer='^version https://git-lfs\.github\.com/spec/v1'
+
+          # NUL-delimited so a pathname holding a newline (a legal, config-reachable
+          # journal directory name) stays one record. --name-only for the name
+          # scan (anchor `^` must sit at the path start, not before the tree
+          # metadata); the full record for the gitlink mode check. A git failure
+          # here aborts the step (fail closed).
+          names=$(mktemp)
+          trap 'rm -f "${names:-}" "${modes:-}"' EXIT
+          modes=$(mktemp)
+          for c in $commits; do
+            git ls-tree -r -z --name-only "$c" >> "$names"
+            git ls-tree -r -z "$c" >> "$modes"
+          done
+
+          # Decide with grep's exit status only (no capture of NUL-delimited
+          # output, which would warn and be stripped anyway). `grep -q` reads a
+          # file here, not a pipe, so its early exit cannot SIGPIPE a producer.
+          # `git grep` reads the introduced commits' objects. The content scan
+          # matches the spine's fixed header line, which interpolates no configured
+          # path and so cannot be split by any journal name and is anchored so it
+          # matches neither the tool's split source nor this workflow nor prose
+          # that mentions it. The LFS scan matches a Git LFS pointer, since a
+          # custom-named index stored via LFS is a pointer here, not readable
+          # content. Exit 0 is a hit, 1 is no hit, > 1 is a real error and fails
+          # closed.
+          set +e
+          grep -zqaE "$pattern" "$names"; nrc=$?
+          grep -zqaE '^160000 ' "$modes"; grc=$?
+          git grep -qE "$spine_header" $commits; crc=$?
+          git grep -qE "$lfs_pointer" $commits; lrc=$?
+          set -e
+          for rc in "$nrc" "$grc" "$crc" "$lrc"; do
+            if [ "$rc" -gt 1 ]; then
+              echo "::error::a scan failed (exit $rc); cannot verify the introduced commits."
+              exit 1
+            fi
+          done
+
+          if [ "$nrc" -eq 0 ] || [ "$grc" -eq 0 ] || [ "$crc" -eq 0 ] || [ "$lrc" -eq 0 ]; then
+            echo "::error::A journal day file, a derived index (by name, by its header, or hidden as an LFS object), or a submodule is present in a commit this event introduces. These never enter this repository, in any reachable commit."
+            if [ "$nrc" -eq 0 ]; then grep -zaE "$pattern" "$names" | tr '\0' '\n' | sort -u; fi
+            if [ "$grc" -eq 0 ]; then grep -zaE '^160000 ' "$modes" | tr '\0' '\n' | sort -u; fi
+            if [ "$crc" -eq 0 ]; then git grep -lE "$spine_header" $commits; fi
+            if [ "$lrc" -eq 0 ]; then git grep -lE "$lfs_pointer" $commits; fi
+            exit 1
+          fi
+          echo "No journal or index files in the commits this event introduces."
