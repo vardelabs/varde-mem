@@ -71,10 +71,12 @@ jobs:
 
           # Decide by exit status, not captured output (NUL output would warn and be
           # stripped). `grep -q` reads a file, not a pipe, so it cannot SIGPIPE a
-          # producer. The content scan matches the spine's fixed header line (no
-          # interpolated path, so no journal name splits it); the LFS scan matches a
-          # pointer, since a custom-named LFS index is a pointer here. Exit > 1 (a
-          # real error, not "no match") fails closed.
+          # producer. The content scan matches the spine's fixed header line: no
+          # interpolated path, so no journal name splits it, and `^`-anchored, so the
+          # tool's own source that writes the header (indented, not at column 0) and
+          # this workflow do not match. The LFS scan matches a pointer, since a
+          # custom-named LFS index is a pointer here. Exit > 1 (a real error, not
+          # "no match") fails closed.
           set +e
           grep -zqaE "$pattern" "$names"; nrc=$?
           grep -zqaE '^160000 ' "$modes"; grc=$?
