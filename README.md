@@ -8,16 +8,28 @@ The index is **derived**. Every line comes from a journal file, the journals are
 
 ## What a read looks like
 
+One bounded pass over a 200-day journal, shown here at a small budget so the whole shape fits on a screen (the default budget is 120 lines):
+
 ```
-2026-08-31 | Shipped the release; two follow-ups filed.
-2026-08-30 | Reviewed the parser change, merged after one round.
+Journal spine: 200 days, 2026-02-13 to 2026-08-31.
+
+2026-02-13..2026-04-17 | Stood up the pipeline and the first ingest path.
+2026-04-18..2026-06-20 | Shipped v1; migrated the store off the legacy adapter.
+2026-06-21..2026-07-22 | Hardened the config layer; cut v1's ingest path.
+2026-07-23..2026-08-07 | Reworked the index arithmetic; tightened the tests.
+2026-08-08..2026-08-15 | Traced and fixed the flaky fixture.
+2026-08-16..2026-08-23 | Public-ready scaffold; CI now guards the journal.
+2026-08-24..2026-08-25 | Trimmed the guard comments to the load-bearing why.
+2026-08-26..2026-08-27 | Cut the legacy adapter; stabilised CI.
+2026-08-28 | Reviewed the parser change; merged after one round.
 2026-08-29 | Flaky test traced to a shared fixture; isolated it.
-2026-08-27..2026-08-28 | Cut the legacy adapter, stabilised CI.
-2026-08-01..2026-08-24 | 3 weeks: migrated the store, retired v1's ingest path.
-2026-05-01..2026-07-31 | 1 quarter: built the pipeline, shipped v1.
+2026-08-30 | Recast the README for a public reader.
+2026-08-31 | Shipped the release; two follow-ups filed.
+
+12 lines, budget 12.
 ```
 
-The most recent days print in full; older stretches collapse into ever-wider single lines. Everything above fits a fixed budget (default 120 lines); raise it with `read --budget N`.
+The read prints oldest first. Recent days print in full at the bottom; each older stretch folds into a wider block, up to the 64-day blocks at the top. The whole read stays within the line budget however long the history grows. Raise the budget with `read --budget N` for more lines and finer detail.
 
 ## Install
 
@@ -37,7 +49,7 @@ Read at the start of a session, write at the end.
 vardemem read                                    # the bounded view above
 vardemem put 2026-08-31 "Shipped the release."   # record one day
 vardemem due                                     # the next rollup the read needs, if any
-vardemem roll 2026-08-01..2026-08-24 "3 weeks: migrated the store, ..."
+vardemem roll 2026-08-16..2026-08-23 "Public-ready scaffold; CI now guards the journal."
 ```
 
 VardeMem prints the text to compress and takes one line back; it does not summarize for you. The read stays cheap only while those rollups get written: skip the write and the index slowly decays toward one line per day.
@@ -55,8 +67,10 @@ VardeMem prints the text to compress and takes one line back; it does not summar
 | `roll <a>..<b> "..."` | Record one rollup. |
 | `grep <regex>` | Search day lines and rollups. |
 | `forget <a>..<b>` | Drop a bad rollup and everything built on it. |
-| `forget --orphaned` | Drop every rollup the day set outgrew. |
+| `forget --orphaned` | Drop every rollup the day set outgrew, plus any rollup line the parser rejected outright. |
 | `selftest` | Property checks for the arithmetic and the config layer. Needs no journal. |
+
+`--budget N` applies to `read`, `due`, `roll`, and `put` alike, so a non-default budget keeps the queue and the read agreeing on which rollups the read needs.
 
 ## Configuration
 
@@ -83,7 +97,7 @@ Each path stays under its own base: no absolute paths, no `..`. To keep a journa
 ["/path/to/your/first-tree", "/path/to/your/second-tree"]
 ```
 
-If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it is set (naming that variable is itself an explicit choice, so the trust list does not gate it); otherwise it reports that there is no journal. The trust file is read from your passwd-entry home, not `$HOME`, so a repo you merely have open cannot redirect the tool at itself.
+If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it is set (naming that variable is itself an explicit choice, so the trust list does not gate it); otherwise it reports that there is no journal. By default the trust file is read from your passwd-entry home, not `$HOME`, so a repo you merely have open cannot redirect the tool at itself.
 
 ## Exit codes
 
@@ -91,7 +105,7 @@ If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it
 | --- | --- |
 | `0` | The command did what it says. |
 | `1` | A failure, named on stderr. |
-| `3` | No journal to read: nothing trusted was found and `$AGENT_VAULT` is unset or names a journal-less tree. Distinct from `1` so a session-start caller can stay quiet where there was never a journal, and loud everywhere else. |
+| `3` | No journal to read: no configured journal resolved. Either nothing trusted answered and `$AGENT_VAULT` is unset, or the tree that answered sets no `journal` key or points at a journal directory that is not there. Distinct from `1` so a session-start caller can stay quiet where there was never a journal, and loud everywhere else. |
 | `130` | Interrupted (Ctrl-C). |
 
 ## How it stays bounded
@@ -100,7 +114,7 @@ VardeMem tiles history with aligned power-of-two blocks whose detail thins with 
 
 **Keep the write bounded.** Normal accrual owes little, usually nothing and at most a handful as the history grows, so a few rollups per session keep the read current. The one event that owes a lot at once is backfilling a day older than the whole history: it shifts every block boundary and invalidates the tree (73 rollups on a 400-day history, measured). Clear a few and let the rest re-accrue; the read stays usable meanwhile, just less compressed.
 
-**Concurrency.** Two writers on one host serialize under a file lock. A real conflict needs two diverged checkouts recording the same day, and date-keying localizes it to one line or one file: a clashing index line is derived, so keep either side or re-summarize; a journal day file is real append-only history, so keep both.
+**Concurrency.** On a POSIX host, two writers serialize under a file lock (where `fcntl` is unavailable, such as Windows, there is none). A real conflict needs two diverged checkouts recording the same day, and date-keying localizes it to one line or one file: a clashing index line is derived, so keep either side or re-summarize; a journal day file is real append-only history, so keep both.
 
 ## Files
 
