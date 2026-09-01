@@ -62,7 +62,7 @@ VardeMem prints the text to compress and takes one line back; it does not summar
 | `missing` | Days with a journal file and no index line. |
 | `draft <date>` | That day's headers and body, to compress from. Writes nothing. |
 | `put <date> "..."` | Record, or rewrite, one day line. |
-| `put <date> "..." --rebuild` | Insert a day the tree has outgrown, dropping the rollups it invalidates. |
+| `put <date> "..." --rebuild` | Insert a day the tree has outgrown, or rewrite one a rollup already summarizes; drops the rollups it invalidates. |
 | `due [--all]` | Rollups the current read needs, smallest first. |
 | `roll <a>..<b> "..."` | Record one rollup. |
 | `grep <regex>` | Search day lines and rollups. |
@@ -97,7 +97,7 @@ Each path stays under its own base: no absolute paths, no `..`. To keep a journa
 ["/path/to/your/first-tree", "/path/to/your/second-tree"]
 ```
 
-If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it is set; otherwise it reports that there is no journal. The trust decision lives in your environment, which is operator input. `$AGENT_VAULT` names a root directly, and `$VARDEMEM_TRUST_FILE` overrides where the trusted-roots list is read from; its default, `~/.config/vardemem/trust.json`, is taken from your passwd entry rather than `$HOME`, so a reset `$HOME` cannot move it. A repo you merely open sets none of these, so it cannot redirect the tool at itself; a repo whose shell hooks you have allowed to set your environment already can, like any program you let configure your shell.
+If the walk finds nothing trusted, VardeMem falls back to `$AGENT_VAULT` when it is set; otherwise it reports that there is no journal. The trust decision lives in your environment, which is operator input. `$AGENT_VAULT` names a root directly, and an absolute `$VARDEMEM_TRUST_FILE` overrides where the trusted-roots list is read from (a relative value is ignored); its default, `~/.config/vardemem/trust.json`, is taken from your passwd entry rather than `$HOME`, so a reset `$HOME` cannot move it. A repo you merely open sets none of these, so it cannot redirect the tool at itself; a repo whose shell hooks you have allowed to set your environment already can, like any program you let configure your shell.
 
 ## Exit codes
 
