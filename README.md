@@ -26,7 +26,10 @@ One file, `vardemem.py`, standard library only. No install step, no build, no de
 | Path | Purpose |
 | --- | --- |
 | `vardemem.py` | The tool. Implementation plus `selftest`. |
-| `.github/workflows/selftest.yml` | CI: parses the file, then runs `selftest` on Linux and macOS, from inside and outside the checkout. |
+| `CONTRIBUTING.md` | The pre-PR checklist and the boundaries a change keeps. |
+| `.github/workflows/selftest.yml` | CI: parses the file, then runs `selftest` on Ubuntu, from inside and outside the checkout. |
+| `.github/workflows/no-journal-content.yml` | CI: rejects a journal day file or the derived index in any commit the event introduces. |
+| `.github/WORKFLOWS.md` | Index of the CI workflows and the rules they follow. |
 
 ## Configuration
 
