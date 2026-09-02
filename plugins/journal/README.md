@@ -48,7 +48,7 @@ inlined. If that detector is built and a single-block-per-Stop guarantee across
 two gates is genuinely wanted, extract the reader and ledger then, as an
 installed, securely-resolved module both hooks import from a fixed trusted path.
 
-## `enforce-journal-tags.py` — PreToolUse (Edit|Write|MultiEdit)
+## `enforce-journal-tags.py` (PreToolUse (Edit|Write|MultiEdit))
 
 Denies a write that **adds** an untagged entry to a Daily Note (a bold
 lead-in at column 0 followed by prose, e.g. `[decision] **Retired the charter
