@@ -34,3 +34,4 @@ jobs:
       - run: python3 plugins/memory-hygiene/tests/smoke-snapshot.py
       - run: python3 plugins/journal/tests/smoke-enforce-journal-entry.py
       - run: python3 plugins/journal/tests/smoke-enforce-journal-tags.py
+      - run: python3 plugins/journal/tests/smoke-preload-spine.py

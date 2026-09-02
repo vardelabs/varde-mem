@@ -846,7 +846,7 @@ if __name__ == "__main__":
         # write is itself guarded so nothing can defeat the exit-0 guarantee.
         try:
             sys.stderr.write(
-                "[harness-management] preload-spine.py: unexpected error (%r), "
+                "[journal] preload-spine.py: unexpected error (%r), "
                 "session starts with NO episodic spine (fail-open, #1383)\n" % e)
         except Exception:
             pass

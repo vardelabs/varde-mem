@@ -28,7 +28,8 @@ Covers, in order:
   7. recency              -- the fit keeps the NEWEST lines, not the oldest
   8. no handoff           -- a missing/unslugged cache still gets its spine;
                              the cache-side note belongs to the cache hook
-  9. disable switch       -- `preload-spine` in $HARNESS_MANAGEMENT_DISABLED
+  9. disable switch       -- `preload-spine` in $JOURNAL_DISABLED (or the legacy
+                             $HARNESS_MANAGEMENT_DISABLED)
  10. _fit_spine hard clamp -- an oversized HEAD line alone cannot push the
                              return past `allowance` (North review, PR #1535)
  11. read timeout         -- a read that times out gets the visible note
@@ -630,10 +631,12 @@ def main():
             hook_mod._vardemem_search_dirs = lambda d=str(
                 (ok_home / VARDEMEM_REL).parent): (d,)
             # Direct call, not run_hook(): _disabled() reads THIS process's
-            # real os.environ, so an ambient HARNESS_MANAGEMENT_DISABLED
-            # (aliasing preload-session-cache) would short-circuit
-            # build_spine_block before the deadline logic under test runs.
+            # real os.environ, so an ambient disable in EITHER var (the new
+            # JOURNAL_DISABLED or the legacy HARNESS_MANAGEMENT_DISABLED) would
+            # short-circuit build_spine_block before the deadline logic under
+            # test runs. Pop and restore both.
             _real_disabled = os.environ.pop("HARNESS_MANAGEMENT_DISABLED", None)
+            _real_jdisabled = os.environ.pop("JOURNAL_DISABLED", None)
             try:
                 block = hook_mod.build_spine_block(
                     str(vault), 4096, time.monotonic() - 1.0)
@@ -641,6 +644,8 @@ def main():
                 hook_mod._vardemem_search_dirs = _real_search_dirs
                 if _real_disabled is not None:
                     os.environ["HARNESS_MANAGEMENT_DISABLED"] = _real_disabled
+                if _real_jdisabled is not None:
+                    os.environ["JOURNAL_DISABLED"] = _real_jdisabled
             check("did not produce a read" in block,
                   "11 an already-spent hook clock is visible too, not silent")
 
@@ -710,11 +715,12 @@ def main():
         real_search_dirs_fb = hook_mod._vardemem_search_dirs
         hook_mod._vardemem_search_dirs = lambda: (
             str(fence_budget_home / ".local" / "bin"),)
-        # Same direct-call env leak as case 11: an ambient disable would make
-        # build_spine_block return "" for every allowance below, trivially
-        # passing the check. The 700 case returns "" regardless, under
+        # Same direct-call env leak as case 11: an ambient disable in EITHER
+        # var would make build_spine_block return "" for every allowance below,
+        # trivially passing the check. The 700 case returns "" regardless, under
         # SPINE_MIN_ALLOWANCE; 1500 and 4096 are the ones the leak was hiding.
         _real_disabled_fb = os.environ.pop("HARNESS_MANAGEMENT_DISABLED", None)
+        _real_jdisabled_fb = os.environ.pop("JOURNAL_DISABLED", None)
         try:
             for tight_allowance in (700, 1500, 4096):
                 block = hook_mod.build_spine_block(
@@ -735,6 +741,8 @@ def main():
             hook_mod._vardemem_search_dirs = real_search_dirs_fb
             if _real_disabled_fb is not None:
                 os.environ["HARNESS_MANAGEMENT_DISABLED"] = _real_disabled_fb
+            if _real_jdisabled_fb is not None:
+                os.environ["JOURNAL_DISABLED"] = _real_jdisabled_fb
 
         # --- 13. an unfittable pointer is DROPPED, never truncated mid-word ---
         # A head large enough that even the WORST-CASE pointer doesn't fit
