@@ -78,6 +78,19 @@ def main() -> int:
         cases.append(("prune does not follow a symlinked entry (and snapshot.sh uses the idiom)",
                       idiom_ok and script_uses_idiom))
 
+    # 5. prune only touches tool-created (timestamp-named) snapshots: a directory a
+    # user keeps in the snapshot root is never selected by the glob and survives.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = make_memdir(home / "work")
+        sr = snaproot(home); sr.mkdir(parents=True, exist_ok=True)
+        keep = sr / "manual-recovery"; keep.mkdir()
+        (keep / "important.txt").write_text("keep me", encoding="utf-8")
+        for _ in range(11):
+            run_snap(home, md)
+        ts_dirs = [d for d in sr.iterdir() if d.name[:1].isdigit()]
+        cases.append(("prune spares a non-snapshot dir in the root, keeps 10 snapshots",
+                      keep.is_dir() and (keep / "important.txt").is_file() and len(ts_dirs) == 10))
+
     ok = True
     for label, passed in cases:
         print(f"  [{'PASS' if passed else 'FAIL'}] {label}")

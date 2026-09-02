@@ -106,6 +106,8 @@ def load_vault_types() -> set:
 
 
 def parse_frontmatter_type(text: str) -> str:
+    # Byte-identical matcher to the hook's frontmatter_type (see its docstring for
+    # the deliberate line-oriented, dependency-free simplification and its bounded cost).
     if not text.startswith("---"):
         return ""
     end = text.find("\n---", 3)

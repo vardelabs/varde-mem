@@ -109,7 +109,16 @@ def load_config() -> tuple:
 
 
 def frontmatter_type(text: str) -> str:
-    """The frontmatter `type:` value at any indent (top-level or under metadata:), or ''."""
+    """The frontmatter `type:` value (top-level or under metadata:), or ''.
+
+    Deliberately line-oriented, not a full YAML parse. A memory's frontmatter is a
+    simple name / description / metadata.type shape, so matching `type:` at any
+    indent is enough and keeps the plugin dependency-free. The known cost: a
+    `type:` line embedded in a block-scalar value would false-match. It is accepted
+    rather than pulling in a YAML parser for a shape memories do not have, and it is
+    bounded -- the hook only advises (the agent re-decides) and the scanner's
+    verdict is re-judged by reading the actual file.
+    """
     if not text.startswith("---"):
         return ""
     end = text.find("\n---", 3)
