@@ -1,0 +1,4 @@
+{
+  "name": "memory-hygiene",
+  "description": "Memory-hygiene tooling for a long-running agent's Claude Code auto-memory dir (~/.claude/projects/<slug>/memory/). Two components share one opt-in per-tenant config (~/.config/memory-hygiene/memory-routing.json): the consolidate-memory skill (periodic cleanup of the auto-memory dir -- merge related single-fact files, promote mis-routed facts to the agent's vault, propose plugin-scoped facts for a human to land, delete facts already covered in canon, rebuild the index; skip-gated by a deterministic scanner, with a snapshot undo for the memory dir) and the opt-in enforce-memory-routing PostToolUse hook (a write-time reflex that flags a memory whose frontmatter type is vault-bound). With no config the hook no-ops. Disable per-tenant via MEMORY_HYGIENE_DISABLED. Version lives in the consuming marketplace, never here."
+}

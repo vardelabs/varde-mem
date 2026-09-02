@@ -25,7 +25,7 @@ SKILL.md. Resolve the skill dir once:
 
 ```
 SKILL_DIR="${CLAUDE_SKILL_DIR}"
-[ -f "$SKILL_DIR/scan.py" ] || { echo "vardemem: scan.py not found (SKILL_DIR=$SKILL_DIR) -- is the plugin installed?" >&2; exit 1; }
+[ -f "$SKILL_DIR/scan.py" ] || { echo "memory-hygiene: scan.py not found (SKILL_DIR=$SKILL_DIR) -- is the plugin installed?" >&2; exit 1; }
 ```
 
 ## Safety model (read first)
@@ -111,7 +111,7 @@ bash "$SKILL_DIR/snapshot.sh" "$MEMDIR"
 
 Copies the dir to `~/.local/state/memory-snapshots/<timestamp>/` and prunes to
 the last 10. Restore with
-`rsync -a --delete --exclude=.vardemem-snapshot <snapshot_dir>/ ~/.claude/projects/<slug>/memory/`
+`rsync -a --delete --exclude=.memory-hygiene-snapshot <snapshot_dir>/ ~/.claude/projects/<slug>/memory/`
 (the `--exclude` keeps snapshot.sh's ownership marker out of the restored dir).
 
 ### 3. Classify each memory (read them, don't trust filenames)
@@ -259,7 +259,7 @@ leaked credential must be ROTATED, and a leaked identifier or person's name is p
 - The deterministic scanner is the only cheap gate; steps 3-5 are judgment and must
   be done by reading the actual files.
 - Routing targets follow the tenant's own vault layout. The companion
-  `enforce-memory-routing` hook reads `~/.config/vardemem/memory-routing.json`
+  `enforce-memory-routing` hook reads `~/.config/memory-hygiene/memory-routing.json`
   (canonical), falling back to `~/.config/harness-management/memory-routing.json`.
   This scanner reads the same config for its `trip_types`, so scanner and hook agree
   on what is vault-bound.

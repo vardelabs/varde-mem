@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test for snapshot.sh (vardemem consolidate-memory undo helper).
+"""Smoke test for snapshot.sh (memory-hygiene consolidate-memory undo helper).
 
 Runs snapshot.sh against a throwaway $HOME so its hardcoded snapshot root
 (~/.local/state/memory-snapshots) is controlled. Covers a normal snapshot, the
@@ -19,7 +19,7 @@ import tempfile
 from pathlib import Path
 
 SNAP = Path(__file__).resolve().parent.parent / "skills" / "consolidate-memory" / "snapshot.sh"
-MARKER = ".vardemem-snapshot"
+MARKER = ".memory-hygiene-snapshot"
 
 
 def run_snap(home: Path, memdir: Path):

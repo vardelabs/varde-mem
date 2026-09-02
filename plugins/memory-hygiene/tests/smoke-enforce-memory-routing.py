@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Smoke test for enforce-memory-routing.py (vardemem).
+r"""Smoke test for enforce-memory-routing.py (memory-hygiene).
 
 Runs the hook as a subprocess against a throwaway $HOME so the config and memory
 file are fully controlled. Covers the opt-in gate, trip-type match, silent cases,
@@ -25,7 +25,7 @@ from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "enforce-memory-routing.py"
 
-CANONICAL_CFG_DIR = ".config/vardemem"
+CANONICAL_CFG_DIR = ".config/memory-hygiene"
 LEGACY_CFG_DIR = ".config/harness-management"
 
 
@@ -34,7 +34,7 @@ def run(home: Path, file_path: str, *, disable_env: str = "") -> str:
     env = dict(os.environ)
     env["HOME"] = str(home)
     env["AGENT_VAULT"] = str(home / "agent-vault")
-    env.pop("VARDEMEM_DISABLED", None)
+    env.pop("MEMORY_HYGIENE_DISABLED", None)
     env.pop("HARNESS_MANAGEMENT_DISABLED", None)
     if disable_env:
         env[disable_env] = "enforce-memory-routing"
@@ -51,7 +51,7 @@ def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
     env = dict(os.environ)
     env["HOME"] = str(home)
     env["AGENT_VAULT"] = str(home / "agent-vault")
-    env.pop("VARDEMEM_DISABLED", None)
+    env.pop("MEMORY_HYGIENE_DISABLED", None)
     env.pop("HARNESS_MANAGEMENT_DISABLED", None)
     if cfg is not None:
         cfg_dir = home / CANONICAL_CFG_DIR
@@ -150,8 +150,8 @@ def main() -> int:
 
         # dual-honor disable env
         write_config(home, enabled=True)
-        out = run(home, write_mem(home, "proj3.md", "project"), disable_env="VARDEMEM_DISABLED")
-        cases.append(("VARDEMEM_DISABLED opt-out", out == ""))
+        out = run(home, write_mem(home, "proj3.md", "project"), disable_env="MEMORY_HYGIENE_DISABLED")
+        cases.append(("MEMORY_HYGIENE_DISABLED opt-out", out == ""))
         out = run(home, write_mem(home, "proj4.md", "project"), disable_env="HARNESS_MANAGEMENT_DISABLED")
         cases.append(("legacy HARNESS_MANAGEMENT_DISABLED dual-honored", out == ""))
         out = run(home, write_mem(home, "proj5.md", "project"))

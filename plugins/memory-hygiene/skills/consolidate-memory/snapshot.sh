@@ -10,10 +10,10 @@
 # dir (~/.claude/projects/<cwd-as-slug>/memory); override with arg 1.
 #
 # Usage:   snapshot.sh [memory_dir]
-# Restore: rsync -a --delete --exclude=.vardemem-snapshot <snapshot_dir>/ <memory_dir>/
+# Restore: rsync -a --delete --exclude=.memory-hygiene-snapshot <snapshot_dir>/ <memory_dir>/
 set -euo pipefail
 
-MARKER=.vardemem-snapshot   # ownership tag; only dirs carrying it are pruned
+MARKER=.memory-hygiene-snapshot   # ownership tag; only dirs carrying it are pruned
 
 if [ "${1:-}" != "" ]; then
   MEMDIR="$1"

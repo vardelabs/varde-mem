@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test for scan.py (vardemem consolidate-memory scanner).
+"""Smoke test for scan.py (memory-hygiene consolidate-memory scanner).
 
 Runs scan.py as a subprocess against a throwaway $HOME and memory dir. Covers the
 verdict logic (bloat -> NEEDS_RUN, healthy -> SKIP, missing dir -> ERROR) and two
@@ -42,7 +42,7 @@ def write_mems(memdir: Path, n: int, ftype: str) -> None:
 
 
 def write_cfg(home: Path, *, legacy: bool = False) -> None:
-    d = home / (".config/harness-management" if legacy else ".config/vardemem")
+    d = home / (".config/harness-management" if legacy else ".config/memory-hygiene")
     d.mkdir(parents=True, exist_ok=True)
     (d / "memory-routing.json").write_text(
         json.dumps({"enabled": True, "trip_types": {"project": "x", "user": "y"}}), encoding="utf-8")
@@ -85,7 +85,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 2, "project")
         write_cfg(home, legacy=True)  # legacy would trip if wrongly served
-        (home / ".config/vardemem/memory-routing.json").mkdir(parents=True)  # canonical is a DIR
+        (home / ".config/memory-hygiene/memory-routing.json").mkdir(parents=True)  # canonical is a DIR
         rc, out = run_scan(home, md)
         cases.append(("F2: unreadable (directory) canonical does not use legacy -> SKIP",
                       rc == 0 and verdict(out) == "SKIP" and "served from legacy" not in out))
@@ -94,7 +94,7 @@ def main() -> int:
     # misroute detection is off (routing is not done on a schedule when disabled).
     with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 2, "project")
-        d = home / ".config/vardemem"; d.mkdir(parents=True, exist_ok=True)
+        d = home / ".config/memory-hygiene"; d.mkdir(parents=True, exist_ok=True)
         (d / "memory-routing.json").write_text(
             json.dumps({"enabled": False, "trip_types": {"project": "x"}}), encoding="utf-8")
         rc, out = run_scan(home, md)
@@ -104,7 +104,7 @@ def main() -> int:
     # a hyphenated trip_type key + a hyphenated memory type trips (parser accepts hyphens/digits).
     with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 2, "project-fact")
-        d = home / ".config/vardemem"; d.mkdir(parents=True, exist_ok=True)
+        d = home / ".config/memory-hygiene"; d.mkdir(parents=True, exist_ok=True)
         (d / "memory-routing.json").write_text(
             json.dumps({"enabled": True, "trip_types": {"project-fact": "x"}}), encoding="utf-8")
         rc, out = run_scan(home, md)

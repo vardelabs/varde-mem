@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','enforce-memory-routing.py') if r else None; (sys.stderr.write('[memory-hygiene] enforce-memory-routing: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

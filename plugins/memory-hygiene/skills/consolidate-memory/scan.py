@@ -39,7 +39,7 @@ from pathlib import Path
 STATE_FILE = Path.home() / ".local/state/memory-consolidation-scan.json"
 # Canonical config path; the pre-move path is kept as a fallback. Shared with the
 # enforce-memory-routing hook so scanner and hook agree on trip_types.
-CONFIG_FILE = Path.home() / ".config/vardemem/memory-routing.json"
+CONFIG_FILE = Path.home() / ".config/memory-hygiene/memory-routing.json"
 LEGACY_CONFIG_FILE = Path.home() / ".config/harness-management/memory-routing.json"
 
 FILE_COUNT_TRIP = 22   # index bloat threshold (lean target is ~15-17)
@@ -60,7 +60,7 @@ def _trip_types_from(text: str):
     `enabled` not true, or no trip_types). Honors `enabled` the same way the hook
     does, so a config that disables routing (`enabled: false`) yields no trip set
     and a scheduled pass does not route -- disable the write-time advisory alone
-    via VARDEMEM_DISABLED, not by flipping `enabled`."""
+    via MEMORY_HYGIENE_DISABLED, not by flipping `enabled`."""
     try:
         cfg = json.loads(text)
     except (json.JSONDecodeError, ValueError):

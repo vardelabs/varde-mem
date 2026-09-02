@@ -11,17 +11,17 @@ The prevention half of a memory-hygiene pair; the periodic cleanup half is the
 
 OPT-IN PER TENANT. With no config (or `enabled` not true) the hook no-ops:
 
-    $HOME/.config/vardemem/memory-routing.json
+    $HOME/.config/memory-hygiene/memory-routing.json
     {
       "enabled": true,
       "trip_types": {"project": "...routing advice...", "user": "..."},
       "memory_path_regex": "optional; default matches any auto-memory dir"
     }
 
-The canonical path is `~/.config/vardemem/memory-routing.json`; when absent the
+The canonical path is `~/.config/memory-hygiene/memory-routing.json`; when absent the
 hook falls back to `~/.config/harness-management/memory-routing.json` (the pair's
 pre-move path). See hooks/memory-routing.config.example.json. Disable by naming
-`enforce-memory-routing` in $VARDEMEM_DISABLED (legacy $HARNESS_MANAGEMENT_DISABLED
+`enforce-memory-routing` in $MEMORY_HYGIENE_DISABLED (legacy $HARNESS_MANAGEMENT_DISABLED
 dual-honored). Always exits 0.
 """
 
@@ -32,7 +32,7 @@ import sys
 import time
 from pathlib import Path
 
-CONFIG_PATH = Path.home() / ".config/vardemem/memory-routing.json"
+CONFIG_PATH = Path.home() / ".config/memory-hygiene/memory-routing.json"
 LEGACY_CONFIG_PATH = Path.home() / ".config/harness-management/memory-routing.json"
 LOG_FILE = Path.home() / ".local/log/memory-routing-hook.log"
 DEFAULT_MEM_RE = r"/\.claude/projects/[^/]+/memory/[^/]+\.md$"
@@ -153,7 +153,7 @@ def main() -> int:
         return 0  # missing/non-string path (e.g. NotebookEdit's notebook_path)
 
     # Disable-env first, so a disabled hook does ZERO disk work.
-    if _disabled_in("VARDEMEM_DISABLED") or _disabled_in("HARNESS_MANAGEMENT_DISABLED"):
+    if _disabled_in("MEMORY_HYGIENE_DISABLED") or _disabled_in("HARNESS_MANAGEMENT_DISABLED"):
         return 0
 
     # Pure config read before the path guard, so a tenant's memory_path_regex can

@@ -1,4 +1,4 @@
-# vardemem
+# memory-hygiene
 
 Memory-hygiene tooling for a long-running agent's Claude Code auto-memory dir
 (`~/.claude/projects/<slug>/memory/`). The auto-memory dir is cwd-scratch, and its
@@ -27,7 +27,7 @@ ends: a write-time reflex and a periodic cleanup.
 Both components share one opt-in per-tenant config. With no config the hook
 no-ops, so the pair is inert until a tenant turns it on.
 
-- **Canonical path:** `~/.config/vardemem/memory-routing.json`.
+- **Canonical path:** `~/.config/memory-hygiene/memory-routing.json`.
 - **Legacy fallback:** `~/.config/harness-management/memory-routing.json`, read
   only when the canonical path is absent (this pair lived in a `harness-management`
   plugin before it moved here).
@@ -49,9 +49,9 @@ mis-routed, so scanner and hook agree on what is vault-bound. `memory_path_regex
 optionally overrides the default auto-memory-path matcher. `$AGENT_VAULT` names the
 vault the advisory points at.
 
-Disable per-tenant by naming a component in `VARDEMEM_DISABLED` (the legacy
+Disable per-tenant by naming a component in `MEMORY_HYGIENE_DISABLED` (the legacy
 `HARNESS_MANAGEMENT_DISABLED` is also honored), e.g.
-`VARDEMEM_DISABLED=enforce-memory-routing`.
+`MEMORY_HYGIENE_DISABLED=enforce-memory-routing`.
 
 ## Tests
 
