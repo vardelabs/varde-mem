@@ -50,6 +50,10 @@ def run(payload, home, env=None, timeout=5):
     """Run the hook; return (denied: bool, reason: str). A hang is a FAILURE."""
     e = dict(os.environ)
     e["HOME"] = str(home)
+    # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from $HOME
+    # (see #2310). Point it at the throwaway home's config dir so the suite stays
+    # hermetic and never reads the developer's real config.
+    e["JOURNAL_CONFIG_DIR"] = str(Path(home) / CFG_DIR)
     e.pop("JOURNAL_DISABLED", None)
     e.pop("HARNESS_MANAGEMENT_DISABLED", None)
     if env:
@@ -223,6 +227,12 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w(UNTAGGED), home, env={"HARNESS_MANAGEMENT_DISABLED": "enforce-journal-tags"})[0] is False)
     check("a DIFFERENT hook named in legacy HARNESS_MANAGEMENT_DISABLED -> still denies",
           run(w(UNTAGGED), home, env={"HARNESS_MANAGEMENT_DISABLED": "some-other-hook"})[0] is True)
+    # The OLD monolith name disables ONLY through the legacy var, so a tenant who
+    # set it there before the rename stays disabled.
+    check("legacy name enforce-daily-note-tags in legacy var -> no-op",
+          run(w(UNTAGGED), home, env={"HARNESS_MANAGEMENT_DISABLED": "enforce-daily-note-tags"})[0] is False)
+    check("legacy name in the NEW JOURNAL_DISABLED -> still denies (new var, new name only)",
+          run(w(UNTAGGED), home, env={"JOURNAL_DISABLED": "enforce-daily-note-tags"})[0] is True)
 
     # ---- config hardening (Codex #8) ----
     print("config hardening")
@@ -244,6 +254,18 @@ with tempfile.TemporaryDirectory() as tmp:
     check("custom dir honored", run(w(UNTAGGED, path=str(note2 / "x.md")), home)[0] is True)
     check("custom dir REPLACES the default (Daily Notes now silent)",
           run(w(UNTAGGED), home)[0] is False)
+
+    # #2310 guard: config is disk-located via $JOURNAL_CONFIG_DIR, never derived
+    # from $HOME. An enabled config under a spoofed $HOME must not deny when the
+    # absolute override points at a dir that has none.
+    spoof = home / "attacker-home"
+    (spoof / CFG_DIR).mkdir(parents=True, exist_ok=True)
+    (spoof / CFG_DIR / "journal-tags.json").write_text(
+        json.dumps({"enabled": True}), encoding="utf-8")
+    empty_cfg = home / "empty-cfg"; empty_cfg.mkdir(parents=True, exist_ok=True)
+    check("enabled config under a spoofed $HOME is ignored; the override wins: allow",
+          run(w(UNTAGGED), spoof, env={"JOURNAL_CONFIG_DIR": str(empty_cfg)})[0] is False)
+    write_cfg(home, {"enabled": True})
 
     # ---- self-review findings (my own pass, before re-requesting review) ----
     print("fence handling (accepted limitation, see threat model)")

@@ -124,9 +124,11 @@ NAME matched as a path segment (separator-normalized, so Windows paths work), wh
 not a regex and cannot backtrack.
 
 OPT-IN PER TENANT via a config file. With no config (or `enabled` not true) the hook
-no-ops, so it never fires for a tenant or client who keeps no Daily Notes:
+no-ops, so it never fires for a tenant or client who keeps no Daily Notes. The config
+is disk-located, never derived from a spoofable $HOME: an absolute $JOURNAL_CONFIG_DIR
+overrides, else it sits under the trusted (passwd/token) home:
 
-    $HOME/.config/journal/journal-tags.json
+    <trusted home>/.config/journal/journal-tags.json
     {
       "enabled": true,
       "tags": ["decision", "fix", "architecture", "ops"],
@@ -134,8 +136,9 @@ no-ops, so it never fires for a tenant or client who keeps no Daily Notes:
     }
 
 Disable entirely (even with a config present) by naming `enforce-journal-tags` in
-$JOURNAL_DISABLED (the legacy $HARNESS_MANAGEMENT_DISABLED, under which this hook
-shipped in the monolith, is still honored).
+$JOURNAL_DISABLED. The legacy $HARNESS_MANAGEMENT_DISABLED, under which this hook
+shipped in the monolith as `enforce-daily-note-tags`, still disables it under EITHER
+name, so a tenant who disabled the old name stays disabled after the rename.
 
 FAIL OPEN, ALWAYS. A PreToolUse deny blocks real work, so every uncertainty resolves to
 "allow": a malformed payload, an unusable config, an unreadable file, or any unexpected
@@ -154,8 +157,19 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from agent_home import env_override_or_home  # noqa: E402  (sibling module)
+
 HOOK_NAME = "enforce-journal-tags"
-CONFIG_PATH = Path.home() / ".config" / "journal" / "journal-tags.json"
+# The name this hook shipped under in the monolith. Honored ONLY in the legacy
+# disable var, so a tenant who disabled it there stays disabled after the rename.
+LEGACY_HOOK_NAME = "enforce-daily-note-tags"
+CONFIG_FILE = "journal-tags.json"
+# Config is disk-located, never derived from a spoofable $HOME: an absolute
+# $JOURNAL_CONFIG_DIR overrides, else <trusted home>/.config/journal. Resolved
+# LAZILY in load_config, not at import: this hook fires on every candidate write
+# and the home lookup is not free (see agent_home.config_path, #2310).
+CONFIG_DIR_ENV = "JOURNAL_CONFIG_DIR"
 
 DEFAULT_TAGS = ("decision", "fix", "architecture", "ops")
 DEFAULT_DIRS = ("Daily Notes",)
@@ -210,11 +224,17 @@ CODE_SPAN_RE = re.compile(r"`[^`]*`")
 
 
 def _disabled() -> bool:
-    """True when this hook is named in $JOURNAL_DISABLED (or, still honored,
-    the legacy $HARNESS_MANAGEMENT_DISABLED it shipped under in the monolith)."""
-    for var in ("JOURNAL_DISABLED", "HARNESS_MANAGEMENT_DISABLED"):
+    """True when this hook is disabled by name. $JOURNAL_DISABLED takes the
+    current name only; the legacy $HARNESS_MANAGEMENT_DISABLED it shipped under
+    in the monolith honors EITHER name, so a tenant who disabled the old
+    `enforce-daily-note-tags` there stays disabled after the rename."""
+    for var, names in (
+        ("JOURNAL_DISABLED", (HOOK_NAME,)),
+        ("HARNESS_MANAGEMENT_DISABLED", (HOOK_NAME, LEGACY_HOOK_NAME)),
+    ):
         raw = os.environ.get(var, "")
-        if HOOK_NAME in {p.strip() for p in raw.split(",") if p.strip()}:
+        present = {p.strip() for p in raw.split(",") if p.strip()}
+        if present.intersection(names):
             return True
     return False
 
@@ -225,7 +245,10 @@ def load_config() -> dict:
     Returns the usable opt-in dict, or {} when there is no usable config (absent,
     malformed, or `enabled` not true), in which case the hook no-ops.
     """
-    raw = read_regular(CONFIG_PATH)  # a FIFO config would otherwise block forever
+    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal")
+    if base is None:
+        return {}
+    raw = read_regular(Path(base) / CONFIG_FILE)  # a FIFO config would otherwise block forever
     if raw is None:
         return {}
     try:
