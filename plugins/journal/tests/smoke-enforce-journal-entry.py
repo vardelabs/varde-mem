@@ -21,7 +21,7 @@ Case classes:
   - safety: a traversal session_id creates nothing outside the state dir;
     malformed payloads and transcripts are silent; records from another
     session id are ignored
-  - the transcript reader's turn split and result mapping, tested in-process
+  - the transcript reader's session slice and result mapping, tested in-process
 
 Usage: python3 tests/smoke-enforce-journal-entry.py   (exit 0 = all pass)
 """
@@ -299,6 +299,10 @@ with tempfile.TemporaryDirectory() as tmp:
         ("gh issue create -h at end of command", "gh issue create -h"),
         ("git log --grep='git commit'", "git log --oneline --grep='git commit' -n 5"),
         ("man git commit", "man git commit | head"),
+        # A work verb must end on a token boundary: these are different git
+        # commands that a bare prefix test read as `git commit`.
+        ("git commit-tree", "git commit-tree -p HEAD $(git write-tree)"),
+        ("git commit-graph write", "git commit-graph write --reachable"),
     ]:
         sid, t = new_session(tmp, "verb")
         t.prompt(); t.call("Bash", {"command": cmd})
@@ -533,10 +537,10 @@ with tempfile.TemporaryDirectory() as tmp:
     t.prompt("second"); t.call("Bash", {"command": "ls"}, ok=False); t.call("Write", {"file_path": "/r/b"}, ok=None)
     t.text("I'll open the PR next.")
     act = ej.inspect_transcript(t.write(), sid)
-    check("session slice holds every call", [c.name for c in act.session.calls] == ["Edit", "Bash", "Write"])
-    check("turn slice holds only the last turn", [c.name for c in act.turn.calls] == ["Bash", "Write"])
-    check("turn text is the last turn's text", act.turn.assistant_text == ["I'll open the PR next."])
-    check("ok mapping: True / False / None", [c.ok for c in act.session.calls] == [True, False, None])
+    # Every call of the SESSION, across both turns: a journal write in an
+    # earlier turn still satisfies the gate.
+    check("the reader holds every call of the session", [c.name for c in act.calls] == ["Edit", "Bash", "Write"])
+    check("ok mapping: True / False / None", [c.ok for c in act.calls] == [True, False, None])
     check("last assistant uuid is set", isinstance(act.last_assistant_uuid, str) and len(act.last_assistant_uuid) > 0)
     check("stop_key is the last assistant uuid", ej.stop_key_for(act, str(t.path)) == act.last_assistant_uuid)
     led = ej.Ledger("bad/../id", Path(tmp) / "state")

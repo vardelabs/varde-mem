@@ -22,13 +22,14 @@ jobs:
       - run: python3 vardemem.py selftest
 
   plugin-tests:
-    # The memory-hygiene plugin ships stdlib-only smoke suites for its hook,
-    # scanner, and snapshot helper. Run them in CI so the validation is real, not
-    # only run by hand (.github/WORKFLOWS.md: a workflow must run what it claims).
-    # No network, no writes outside a temp dir.
+    # Every plugin ships stdlib-only smoke suites. Run them in CI so the
+    # validation is real, not only run by hand (.github/WORKFLOWS.md: a workflow
+    # must run what it claims). No network, no writes outside a temp dir.
+    # A new suite gets a row here in the PR that adds it, or it never runs.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - run: python3 plugins/memory-hygiene/tests/smoke-enforce-memory-routing.py
       - run: python3 plugins/memory-hygiene/tests/smoke-scan.py
       - run: python3 plugins/memory-hygiene/tests/smoke-snapshot.py
+      - run: python3 plugins/journal/tests/smoke-enforce-journal-entry.py

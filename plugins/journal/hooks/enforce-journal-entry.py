@@ -190,23 +190,17 @@ class ToolCall:
     # True: a result was seen and it was not an error. False: the result was an
     # error (a tool failure, or a PreToolUse deny). None: no result was seen.
     ok: "bool | None"
-    sidechain: bool
-    uuid: str
-    index: int
-
-
-@dataclass
-class ActivitySlice:
-    calls: list = field(default_factory=list)
-    assistant_text: list = field(default_factory=list)
 
 
 @dataclass
 class SessionActivity:
-    session: ActivitySlice
-    turn: ActivitySlice
-    last_assistant_uuid: "str | None"
-    truncated: bool
+    # Every tool call of the session, in order. The gate judges the WHOLE
+    # session, never the last turn: a Journal write four turns back still
+    # satisfies, so no turn split is kept.
+    calls: list = field(default_factory=list)
+    # The Stop key of the audit record, nothing else.
+    last_assistant_uuid: "str | None" = None
+    truncated: bool = False
 
 
 def log(msg: str) -> None:
@@ -261,20 +255,13 @@ def load_config() -> "dict | None":
     return merged
 
 
-def _is_pure_tool_results(content) -> bool:
-    return (isinstance(content, list) and len(content) > 0
-            and all(isinstance(b, dict) and b.get("type") == "tool_result"
-                    for b in content))
-
-
 class _Scan:
     """Mutable state of one transcript pass."""
 
     def __init__(self, session_id):
         self.session_id = session_id
-        self.calls, self.texts = [], []
+        self.calls = []
         self.by_id = {}
-        self.turn_calls_at, self.turn_text_at = 0, 0
         self.last_assistant_uuid = None
 
     def _parse(self, line: str):
@@ -302,30 +289,26 @@ class _Scan:
         if not isinstance(content, list):
             return
         for block in content:
-            if not isinstance(block, dict):
-                continue
-            if block.get("type") == "tool_use":
-                self._tool_use(block, rec, uuid if isinstance(uuid, str) else "")
-            elif block.get("type") == "text" and isinstance(block.get("text"), str):
-                self.texts.append(block["text"])
+            if isinstance(block, dict) and block.get("type") == "tool_use":
+                self._tool_use(block)
 
-    def _tool_use(self, block: dict, rec: dict, uuid: str) -> None:
+    def _tool_use(self, block: dict) -> None:
         inp = block.get("input")
         call = ToolCall(name=str(block.get("name", "")),
-                        input=inp if isinstance(inp, dict) else {},
-                        ok=None, sidechain=bool(rec.get("isSidechain")),
-                        uuid=uuid, index=len(self.calls))
+                        input=inp if isinstance(inp, dict) else {}, ok=None)
         self.calls.append(call)
         if isinstance(block.get("id"), str):
             self.by_id[block["id"]] = call
 
     def _user(self, rec: dict) -> None:
+        """Map each tool result onto the call it answers. A record with no
+        result block (a real prompt) carries nothing this gate reads."""
         content = rec["message"].get("content")
-        if not _is_pure_tool_results(content):
-            # A real prompt: everything after it is the current turn.
-            self.turn_calls_at, self.turn_text_at = len(self.calls), len(self.texts)
+        if not isinstance(content, list):
             return
         for block in content:
+            if not isinstance(block, dict):
+                continue
             call = self.by_id.get(block.get("tool_use_id"))
             if call is not None:
                 call.ok = not bool(block.get("is_error"))
@@ -340,13 +323,9 @@ class _Scan:
             self._user(rec)
 
     def result(self, truncated: bool) -> SessionActivity:
-        return SessionActivity(
-            session=ActivitySlice(calls=self.calls, assistant_text=self.texts),
-            turn=ActivitySlice(calls=self.calls[self.turn_calls_at:],
-                               assistant_text=self.texts[self.turn_text_at:]),
-            last_assistant_uuid=self.last_assistant_uuid,
-            truncated=truncated,
-        )
+        return SessionActivity(calls=self.calls,
+                               last_assistant_uuid=self.last_assistant_uuid,
+                               truncated=truncated)
 
 
 def inspect_transcript(path: str, session_id: "str | None" = None,
@@ -762,6 +741,15 @@ def satisfied_by(call, journal_abs: Path, journal_rel: str, redirect_re) -> bool
     return False
 
 
+def _runs_verb(seg: str, verbs) -> bool:
+    """True when one of `verbs` is the whole start of `seg`, ending on a token
+    boundary. A bare prefix test also matched `git commit-tree` and `git
+    commit-graph`, real git commands that are not the configured verb, so a
+    plumbing call fired the gate: a false fire, which this model calls a bug."""
+    return any(seg.startswith(v) and seg[len(v):len(v) + 1] in ("", " ", "\t")
+               for v in verbs)
+
+
 def is_work(call, cfg: dict) -> bool:
     """A journal write is never asked here: any journal write that was not
     denied already satisfied the gate, and a denied one has `ok` False."""
@@ -771,7 +759,7 @@ def is_work(call, cfg: dict) -> bool:
         fp = _file_path(call)
         return bool(fp) and not is_ignored(fp, cfg["ignore_path_segments"])
     if call.name == "Bash":
-        return any(seg.startswith(tuple(cfg["work_commands"]))
+        return any(_runs_verb(seg, cfg["work_commands"])
                    and NO_OP_FLAGS.isdisjoint(seg.split())
                    for seg in segments(_command(call)))
     return False
@@ -791,7 +779,7 @@ def evaluate(activity, cfg, journal_abs, journal_rel):
     cfg["ignore_path_segments"] = _clean_str_list(
         cfg.get("ignore_path_segments"), DEFAULTS["ignore_path_segments"])
 
-    calls = activity.session.calls
+    calls = activity.calls
     redirect_re = _journal_redirect_re(journal_rel, journal_abs)
     if any(satisfied_by(c, journal_abs, journal_rel, redirect_re) for c in calls):
         return None
