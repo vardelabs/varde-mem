@@ -84,12 +84,14 @@ def load_vault_types() -> set:
         ctext = CONFIG_FILE.read_text(encoding="utf-8")
     except OSError:
         canonical_absent = True
-    if not canonical_absent and ctext is not None:
-        types = _trip_types_from(ctext)  # present: authoritative (may be None)
+    except UnicodeDecodeError:
+        pass  # present but undecodable: authoritative-unusable, no legacy fallback
+    if not canonical_absent:
+        types = _trip_types_from(ctext) if ctext is not None else None
     else:
         try:
             ltext = LEGACY_CONFIG_FILE.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             ltext = None
         if ltext is not None:
             types = _trip_types_from(ltext)
@@ -143,7 +145,7 @@ def main() -> int:
     for p in files:
         try:
             text = p.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             text = ""
         ftype = parse_frontmatter_type(text)
         clusters.setdefault(topic_key(p.stem), []).append(p.name)

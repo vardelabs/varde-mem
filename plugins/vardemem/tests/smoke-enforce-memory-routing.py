@@ -177,13 +177,34 @@ def main() -> int:
         out = run(home, write_mem(home, "nested.md", "user", nested=True))
         cases.append(("nested metadata.type trips", '"additionalContext"' in out and "vault" in out))
 
-        # fail-open: a bad payload/config must not crash
+        # fail-open: a bad payload/config must not crash. A malformed memory_path_regex
+        # must DEGRADE to the default matcher and keep working, so assert the advisory
+        # fires (a crash would also exit 0, so rc==0 alone cannot tell them apart).
         mp = write_mem(home, "fo.md", "project")
         bad_cfg = json.dumps({"enabled": True, "trip_types": {"project": "x"}, "memory_path_regex": 123})
-        rc, _ = run_rc(home, json.dumps({"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg=bad_cfg)
-        cases.append(("fail-open: non-string regex config", rc == 0))
+        rc, out = run_rc(home, json.dumps({"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg=bad_cfg)
+        cases.append(("non-string regex degrades to default matcher (still advises)",
+                      rc == 0 and '"additionalContext"' in out))
         rc, out = run_rc(home, json.dumps({"tool_name": "Write", "tool_input": {"file_path": 123}}))
         cases.append(("fail-open: non-string file_path", rc == 0 and out == ""))
+
+        # trip_types keys are matched case/space-insensitively, so scanner (which
+        # lowercases keys) and hook agree; a "Project " key trips a `project` memory.
+        clear_configs(home)
+        cap_cfg = json.dumps({"enabled": True, "trip_types": {"Project ": "a project fact. Fold it into your vault."}})
+        mp = write_mem(home, "capkey.md", "project")
+        rc, out = run_rc(home, json.dumps({"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg=cap_cfg)
+        cases.append(("trip_types key normalized (capitalized/padded key trips)",
+                      rc == 0 and '"additionalContext"' in out and "vault" in out))
+
+        # an undecodable (invalid UTF-8) canonical config must fail open, not crash;
+        # it is present-authoritative-unusable, so the hook stays silent (no fallback).
+        clear_configs(home)
+        (home / CANONICAL_CFG_DIR).mkdir(parents=True, exist_ok=True)
+        (home / CANONICAL_CFG_DIR / "memory-routing.json").write_bytes(b"\xff\xfe not utf8")
+        out = run(home, write_mem(home, "badenc.md", "project"))
+        cases.append(("undecodable canonical config: fail-open, silent", out == ""))
+        clear_configs(home)
 
         # memory_path_regex is a TRUE override: broadening advises on a non-default path...
         broad_cfg = json.dumps({

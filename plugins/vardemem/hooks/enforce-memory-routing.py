@@ -80,6 +80,8 @@ def load_config() -> tuple:
         ctext = CONFIG_PATH.read_text(encoding="utf-8")
     except OSError:
         cfg = _CANONICAL_ABSENT
+    except UnicodeDecodeError:
+        cfg = None  # present but undecodable: authoritative-but-unusable, no fallback
     else:
         try:
             cfg = json.loads(ctext)
@@ -90,7 +92,7 @@ def load_config() -> tuple:
     if cfg is _CANONICAL_ABSENT:
         try:
             ltext = LEGACY_CONFIG_PATH.read_text(encoding="utf-8")
-        except OSError:
+        except (OSError, UnicodeDecodeError):
             return {}, False
         try:
             cfg = json.loads(ltext)
@@ -177,11 +179,14 @@ def main() -> int:
     # Read the resulting file from disk (robust to Write vs Edit payload shape).
     try:
         text = Path(file_path).read_text(encoding="utf-8")
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return 0
 
+    # Normalize the config's trip_types keys the same way scan.py does
+    # (strip + lowercase), so scanner and hook agree on a key like "Project".
     ftype = frontmatter_type(text)
-    guidance = cfg["trip_types"].get(ftype)
+    trip = {str(k).strip().lower(): v for k, v in cfg["trip_types"].items()}
+    guidance = trip.get(ftype)
     if not guidance:
         return 0
 
