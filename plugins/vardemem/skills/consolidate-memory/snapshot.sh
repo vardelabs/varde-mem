@@ -10,8 +10,10 @@
 # dir (~/.claude/projects/<cwd-as-slug>/memory); override with arg 1.
 #
 # Usage:   snapshot.sh [memory_dir]
-# Restore: rsync -a --delete <snapshot_dir>/ <memory_dir>/
+# Restore: rsync -a --delete --exclude=.vardemem-snapshot <snapshot_dir>/ <memory_dir>/
 set -euo pipefail
+
+MARKER=.vardemem-snapshot   # ownership tag; only dirs carrying it are pruned
 
 if [ "${1:-}" != "" ]; then
   MEMDIR="$1"
@@ -38,14 +40,21 @@ while [ -e "$DEST" ]; do
   DEST="$SNAPROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
 done
 cp -r "$MEMDIR" "$DEST"
+# Tag the snapshot as tool-created. The prune deletes ONLY tagged dirs, so a
+# directory a user or another tool keeps in the snapshot root is never removed no
+# matter what it is named. The restore command excludes the tag so it does not
+# land back in the memory dir.
+touch "$DEST/$MARKER"
 echo "snapshot: $DEST"
 
-# Prune to the last $KEEP snapshots (newest first). Match ONLY tool-created
-# snapshots by their name shape -- eight date digits (YYYYMMDD) then a dash -- so
-# the glob cannot select an unrelated directory kept in the snapshot root, not even
-# one whose name merely starts with a digit (e.g. 2024-backup). Strip the glob's
-# trailing slash before rm: `rm -rf "symlink/"` would FOLLOW a symlinked entry and
-# delete its target's contents, whereas `rm -rf "symlink"` removes only the link.
-ls -1dt "$SNAPROOT"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
-  rm -rf "${old%/}"
+# Prune to the last $KEEP tool-created snapshots (newest first). Ownership is the
+# MARKER file, not the name: an untagged directory is never counted or deleted.
+# Strip each entry's trailing slash before rm so a symlinked entry is removed as a
+# link, never followed into its target.
+ls -1dt "$SNAPROOT"/*/ 2>/dev/null | while read -r d; do
+  if [ -e "${d%/}/$MARKER" ]; then
+    printf '%s\n' "${d%/}"
+  fi
+done | tail -n +$((KEEP + 1)) | while read -r old; do
+  rm -rf "$old"
 done
