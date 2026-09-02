@@ -115,9 +115,10 @@ def frontmatter_type(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return ""
-    # Optional surrounding quotes; the value may contain digits and hyphens
-    # (a `type: project-fact` or `type: "project"` is read the same as the bare form).
-    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?\s*$""", text[3:end], re.MULTILINE)
+    # Optional surrounding quotes and a trailing YAML inline comment; the value may
+    # contain digits and hyphens (`type: project-fact`, `type: "project"`, and
+    # `type: project # note` all read as the bare form).
+    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?\s*(?:#.*)?$""", text[3:end], re.MULTILINE)
     return m.group(1).strip().lower() if m else ""
 
 
@@ -200,9 +201,14 @@ def main() -> int:
     vault_env = os.environ.get("AGENT_VAULT", "").strip()
     vault_name = Path(vault_env).name if vault_env else "your vault"
     name = Path(file_path).name
+    # The filename is DATA, not instructions. Strip backticks and newlines before
+    # embedding it in the model-facing advisory so a crafted name cannot close the
+    # code span and inject text into the next turn's context. The log keeps the raw
+    # name (a local file, never model context).
+    safe_name = re.sub(r"[`\r\n]+", "", name)[:200]
     log(f"flagged mis-route: {name} (type={ftype})")
     advisory = (
-        f"Routing check: the memory you just wrote (`{name}`) has frontmatter "
+        f"Routing check: the memory you just wrote (`{safe_name}`) has frontmatter "
         f"`type: {ftype}`, which is {guidance} The auto-memory dir is cwd-scratch "
         f"only; consider folding this into {vault_name} rather than leaving it to "
         "bloat the session-start index."

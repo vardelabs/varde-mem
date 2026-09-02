@@ -111,6 +111,16 @@ def main() -> int:
         cases.append(("hyphenated type + matching config -> NEEDS_RUN",
                       rc == 0 and verdict(out) == "NEEDS_RUN"))
 
+    # a trailing YAML inline comment on the type line is still parsed and detected.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; md.mkdir(parents=True, exist_ok=True)
+        for i in range(2):
+            (md / f"m{i}.md").write_text("---\ntype: project # vault-bound\n---\nb\n", encoding="utf-8")
+        write_cfg(home)
+        rc, out = run_scan(home, md)
+        cases.append(("inline-comment type + config -> NEEDS_RUN",
+                      rc == 0 and verdict(out) == "NEEDS_RUN"))
+
     ok = True
     for label, passed in cases:
         print(f"  [{'PASS' if passed else 'FAIL'}] {label}")

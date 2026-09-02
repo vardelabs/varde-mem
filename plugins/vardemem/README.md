@@ -58,14 +58,21 @@ Disable per-tenant by naming a component in `VARDEMEM_DISABLED` (the legacy
 ```bash
 python3 tests/smoke-enforce-memory-routing.py
 python3 tests/smoke-scan.py
+python3 tests/smoke-snapshot.py
 ```
 
 The hook suite runs `enforce-memory-routing.py` against a throwaway `$HOME`: the
-opt-in gate, trip-type matching (including quoted YAML values), the silent cases,
-the canonical/legacy config-path fallback, the dual-honor disable env, the
-`memory_path_regex` override, the null- and undecodable-canonical handling,
-Windows-path parity, and the hot-path no-disk-write guarantee.
+opt-in gate, trip-type matching (bare, quoted, hyphenated, and inline-commented
+YAML values), the silent cases, the canonical/legacy config-path fallback, the
+dual-honor disable env, the `memory_path_regex` override, the null- and
+undecodable-canonical handling, filename sanitization in the advisory, Windows-path
+parity, and the hot-path no-disk-write guarantee.
 
 The scanner suite runs `scan.py`: the bloat/healthy/missing-dir verdicts, that
-misroute detection is opt-in (no routing config means only bloat trips), and that
-a present-but-unreadable canonical config does not fall back to a stale legacy one.
+misroute detection is opt-in (no routing config, or `enabled: false`, means only
+bloat trips), and that a present-but-unreadable canonical config does not fall back
+to a stale legacy one.
+
+The snapshot suite runs `snapshot.sh`: a normal snapshot mirrors the memory dir,
+two same-second passes get distinct non-nested dirs (no reliance on `date +%N`),
+pruning keeps the last 10, and the prune never follows a symlinked entry.

@@ -192,6 +192,21 @@ def main() -> int:
         cases.append(("hyphenated frontmatter type trips a hyphenated key",
                       rc == 0 and '"additionalContext"' in out and "vault" in out))
         clear_configs(home)
+        write_config(home, enabled=True)  # back to the default {project, user} config
+
+        # a trailing YAML inline comment on the type line still parses the value.
+        (mem / "commented.md").write_text("---\nname: t\ntype: project # vault-bound\n---\nbody\n", encoding="utf-8")
+        out = run(home, str(mem / "commented.md"))
+        cases.append(("inline-comment type trips", '"additionalContext"' in out and "vault" in out))
+
+        # the filename is sanitized before it reaches the advisory: a backtick in the
+        # name must not appear raw in additionalContext (it could otherwise break the
+        # code span and inject text into the next turn's context).
+        (mem / "inj`x.md").write_text("---\nname: t\ntype: project\n---\nbody\n", encoding="utf-8")
+        out = run(home, str(mem / "inj`x.md"))
+        cases.append(("backtick in filename is stripped from the advisory",
+                      '"additionalContext"' in out and "injx.md" in out and "inj`x.md" not in out))
+        clear_configs(home)
         write_config(home, enabled=True)
 
         # fail-open: a bad payload/config must not crash. A malformed memory_path_regex

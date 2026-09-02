@@ -28,9 +28,15 @@ if [ ! -d "$MEMDIR" ]; then
 fi
 
 mkdir -p "$SNAPROOT"
-# Nanosecond suffix so two runs in the same second get distinct dirs (otherwise
-# the second cp -r nests inside the first snapshot and corrupts its shape).
-DEST="$SNAPROOT/$(date +%Y%m%d-%H%M%S-%N)"
+# Second-resolution timestamp plus PID and $RANDOM, NOT `date +%N`: BSD/macOS date
+# has no %N and would emit a literal "N", so two same-second passes would collide
+# and the second `cp -r` would nest inside the first snapshot and corrupt it. The
+# guard re-rolls on the (astronomically unlikely) collision so the destination is
+# always fresh and `cp -r` mirrors the memory dir rather than nesting into it.
+DEST="$SNAPROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
+while [ -e "$DEST" ]; do
+  DEST="$SNAPROOT/$(date +%Y%m%d-%H%M%S)-$$-$RANDOM"
+done
 cp -r "$MEMDIR" "$DEST"
 echo "snapshot: $DEST"
 
