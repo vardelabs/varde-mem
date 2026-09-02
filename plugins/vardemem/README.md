@@ -57,9 +57,15 @@ Disable per-tenant by naming a component in `VARDEMEM_DISABLED` (the legacy
 
 ```bash
 python3 tests/smoke-enforce-memory-routing.py
+python3 tests/smoke-scan.py
 ```
 
-Runs the hook against a throwaway `$HOME`: the opt-in gate, trip-type matching,
-the silent cases, the canonical/legacy config-path fallback, the dual-honor
-disable env, the `memory_path_regex` override, the null-canonical sentinel,
+The hook suite runs `enforce-memory-routing.py` against a throwaway `$HOME`: the
+opt-in gate, trip-type matching (including quoted YAML values), the silent cases,
+the canonical/legacy config-path fallback, the dual-honor disable env, the
+`memory_path_regex` override, the null- and undecodable-canonical handling,
 Windows-path parity, and the hot-path no-disk-write guarantee.
+
+The scanner suite runs `scan.py`: the bloat/healthy/missing-dir verdicts, that
+misroute detection is opt-in (no routing config means only bloat trips), and that
+a present-but-unreadable canonical config does not fall back to a stale legacy one.

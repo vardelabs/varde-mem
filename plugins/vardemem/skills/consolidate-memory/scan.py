@@ -19,7 +19,10 @@ dir (`~/.claude/projects/<cwd-as-slug>/memory`). A scheduled job should pass
 
 Trip conditions for NEEDS_RUN (any one):
   - total memory files >= FILE_COUNT_TRIP        (index bloat)
-  - mis-routed files (frontmatter type in the trip set) >= MISROUTE_TRIP
+  - mis-routed files (frontmatter type in the config's trip set) >= MISROUTE_TRIP
+
+Misroute detection is opt-in, like the hook: with no usable routing config the
+scanner has no trip set, so only bloat can trip a run.
 
 Topic-clusters are REPORTED as merge hints for the pass to weigh, but do not
 trip a run on their own: filename-prefix clustering over-groups distinct facts
@@ -44,7 +47,6 @@ CLUSTER_MIN = 3        # same-topic files reported as a notable merge hint
 MISROUTE_TRIP = 2      # mis-routed files that warrant a routing pass
 
 TYPE_PREFIXES = ("reference_", "feedback_", "project_", "user_")
-DEFAULT_VAULT_TYPES = {"project", "user"}  # types that usually belong in the vault
 
 
 def default_memory_dir() -> Path:
@@ -73,20 +75,21 @@ def _trip_types_from(text: str):
 def load_vault_types() -> set:
     """Frontmatter `type:` values that count as mis-routed: the config's trip_types
     keys, so scanner and hook agree on what is vault-bound. Same read-order as the
-    hook (only an absent canonical falls back to legacy; a present-but-null
-    canonical is authoritative). When no usable config resolves, fall back to
-    DEFAULT_VAULT_TYPES so a periodic run still catches obvious misroutes -- the one
-    point where the detector diverges from the opt-in hook, which no-ops instead."""
+    hook: only a MISSING canonical (FileNotFoundError) falls back to legacy; a
+    present-but-unreadable or undecodable canonical is authoritative and does not
+    fall back. Misroute detection is opt-in like the hook: with no usable config
+    the trip set is empty, so a routing pass is never triggered for a tenant who
+    has not configured routing (bloat still trips)."""
     types = None
     ctext = None
-    canonical_absent = False
+    canonical_missing = False
     try:
         ctext = CONFIG_FILE.read_text(encoding="utf-8")
-    except OSError:
-        canonical_absent = True
-    except UnicodeDecodeError:
-        pass  # present but undecodable: authoritative-unusable, no legacy fallback
-    if not canonical_absent:
+    except FileNotFoundError:
+        canonical_missing = True
+    except (OSError, UnicodeDecodeError):
+        pass  # present but unreadable: authoritative-unusable, no legacy fallback
+    if not canonical_missing:
         types = _trip_types_from(ctext) if ctext is not None else None
     else:
         try:
@@ -97,8 +100,8 @@ def load_vault_types() -> set:
             types = _trip_types_from(ltext)
             if types is not None:
                 print(f"note: config fallback served from legacy path {LEGACY_CONFIG_FILE} "
-                      f"(canonical {CONFIG_FILE} absent)")
-    return types if types is not None else set(DEFAULT_VAULT_TYPES)
+                      f"(canonical {CONFIG_FILE} missing)")
+    return types if types is not None else set()
 
 
 def parse_frontmatter_type(text: str) -> str:
@@ -107,7 +110,8 @@ def parse_frontmatter_type(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return ""
-    m = re.search(r"^\s*type:\s*([A-Za-z_]+)\s*$", text[3:end], re.MULTILINE)
+    # Optional surrounding quotes: YAML `type: "project"` is equivalent to `type: project`.
+    m = re.search(r"""^\s*type:\s*["']?([A-Za-z_]+)["']?\s*$""", text[3:end], re.MULTILINE)
     return m.group(1).strip().lower() if m else ""
 
 

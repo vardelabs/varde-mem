@@ -177,6 +177,13 @@ def main() -> int:
         out = run(home, write_mem(home, "nested.md", "user", nested=True))
         cases.append(("nested metadata.type trips", '"additionalContext"' in out and "vault" in out))
 
+        # a quoted YAML type value (`type: "project"`) is equivalent to the bare form.
+        mem = home / ".claude/projects/-x/memory"
+        mem.mkdir(parents=True, exist_ok=True)
+        (mem / "quoted.md").write_text('---\nname: t\ntype: "project"\n---\nbody\n', encoding="utf-8")
+        out = run(home, str(mem / "quoted.md"))
+        cases.append(("quoted frontmatter type trips", '"additionalContext"' in out and "vault" in out))
+
         # fail-open: a bad payload/config must not crash. A malformed memory_path_regex
         # must DEGRADE to the default matcher and keep working, so assert the advisory
         # fires (a crash would also exit 0, so rc==0 alone cannot tell them apart).

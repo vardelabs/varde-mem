@@ -38,9 +38,9 @@ LOG_FILE = Path.home() / ".local/log/memory-routing-hook.log"
 DEFAULT_MEM_RE = r"/\.claude/projects/[^/]+/memory/[^/]+\.md$"
 SKIP_NAMES = {"MEMORY.md", ".gitignore"}
 
-# Sentinel for "canonical config unreadable" (absent), kept distinct from a
-# present config that parses to None. Only an ABSENT canonical falls back to
-# legacy; a present-but-null/malformed canonical is authoritative.
+# Sentinel for "canonical config MISSING" (FileNotFoundError), kept distinct from
+# a present config that parses to None. Only a MISSING canonical falls back to
+# legacy; a present-but-unreadable/null/malformed canonical is authoritative.
 _CANONICAL_ABSENT = object()
 
 
@@ -71,17 +71,17 @@ def load_config() -> tuple:
 
     PURE READ (no write/mkdir/log), so it is safe to call before the trip is
     confirmed. `cfg` is the usable opt-in dict, or {} when unusable (absent,
-    disabled, or no trip_types). Canonical is read first; only an ABSENT canonical
-    falls back to legacy, so a present-but-null canonical is authoritative and does
-    not silently prefer a legacy config. Shared read-order with scan.py so scanner
-    and hook agree on trip_types.
+    disabled, or no trip_types). Canonical is read first; only a MISSING canonical
+    (FileNotFoundError) falls back to legacy, so a present-but-unreadable or null
+    canonical is authoritative and does not silently prefer a legacy config. Shared
+    read-order with scan.py so scanner and hook agree on trip_types.
     """
     try:
         ctext = CONFIG_PATH.read_text(encoding="utf-8")
-    except OSError:
+    except FileNotFoundError:
         cfg = _CANONICAL_ABSENT
-    except UnicodeDecodeError:
-        cfg = None  # present but undecodable: authoritative-but-unusable, no fallback
+    except (OSError, UnicodeDecodeError):
+        cfg = None  # present but unreadable/undecodable: authoritative-unusable, no fallback
     else:
         try:
             cfg = json.loads(ctext)
@@ -115,7 +115,8 @@ def frontmatter_type(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return ""
-    m = re.search(r"^\s*type:\s*([A-Za-z_]+)\s*$", text[3:end], re.MULTILINE)
+    # Optional surrounding quotes: YAML `type: "project"` is equivalent to `type: project`.
+    m = re.search(r"""^\s*type:\s*["']?([A-Za-z_]+)["']?\s*$""", text[3:end], re.MULTILINE)
     return m.group(1).strip().lower() if m else ""
 
 
