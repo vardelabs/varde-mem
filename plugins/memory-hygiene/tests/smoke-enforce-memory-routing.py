@@ -2,8 +2,8 @@
 r"""Smoke test for enforce-memory-routing.py (memory-hygiene).
 
 Runs the hook as a subprocess against a throwaway $HOME so the config and memory
-file are fully controlled. Covers the opt-in gate, trip-type match, silent cases,
-canonical/legacy config-path fallback, the dual-honor disable env, the true
+file are fully controlled. Covers the opt-in gate (the config is the only gate),
+trip-type match, silent cases, canonical/legacy config-path fallback, the true
 memory_path_regex override, the null-canonical sentinel, Windows-path parity, and
 the hot-path no-disk-write guarantee.
 
@@ -29,15 +29,11 @@ CANONICAL_CFG_DIR = ".config/memory-hygiene"
 LEGACY_CFG_DIR = ".config/harness-management"
 
 
-def run(home: Path, file_path: str, *, disable_env: str = "") -> str:
-    """Run the hook; disable_env names an env var to set to the hook name."""
+def run(home: Path, file_path: str) -> str:
+    """Run the hook against a controlled $HOME."""
     env = dict(os.environ)
     env["HOME"] = str(home)
     env["AGENT_VAULT"] = str(home / "agent-vault")
-    env.pop("MEMORY_HYGIENE_DISABLED", None)
-    env.pop("HARNESS_MANAGEMENT_DISABLED", None)
-    if disable_env:
-        env[disable_env] = "enforce-memory-routing"
     payload = json.dumps({"tool_name": "Write", "tool_input": {"file_path": file_path}})
     p = subprocess.run([sys.executable, str(HOOK)], input=payload,
                        capture_output=True, text=True, env=env)
@@ -51,8 +47,6 @@ def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
     env = dict(os.environ)
     env["HOME"] = str(home)
     env["AGENT_VAULT"] = str(home / "agent-vault")
-    env.pop("MEMORY_HYGIENE_DISABLED", None)
-    env.pop("HARNESS_MANAGEMENT_DISABLED", None)
     if cfg is not None:
         cfg_dir = home / CANONICAL_CFG_DIR
         cfg_dir.mkdir(parents=True, exist_ok=True)
@@ -147,15 +141,6 @@ def main() -> int:
         write_config(home, enabled=False)
         out = run(home, write_mem(home, "proj2.md", "project"))
         cases.append(("disabled config = no-op", out == ""))
-
-        # dual-honor disable env
-        write_config(home, enabled=True)
-        out = run(home, write_mem(home, "proj3.md", "project"), disable_env="MEMORY_HYGIENE_DISABLED")
-        cases.append(("MEMORY_HYGIENE_DISABLED opt-out", out == ""))
-        out = run(home, write_mem(home, "proj4.md", "project"), disable_env="HARNESS_MANAGEMENT_DISABLED")
-        cases.append(("legacy HARNESS_MANAGEMENT_DISABLED dual-honored", out == ""))
-        out = run(home, write_mem(home, "proj5.md", "project"))
-        cases.append(("both disable envs absent -> runs", '"additionalContext"' in out and "vault" in out))
 
         # config-path fallback + canonical preference
         clear_configs(home)
@@ -270,18 +255,16 @@ def main() -> int:
             {"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg="null")
         cases.append(("null canonical config is authoritative (no legacy fallback)", rc == 0 and out == ""))
 
-    # Hot-path no-disk-write: a disabled hook or an ordinary non-memory write must
-    # do zero disk work, so the log file must not even be created (fresh $HOME).
+    # Hot-path no-disk-write: an ordinary non-memory write must do zero disk work,
+    # so the log file must not even be created (fresh $HOME).
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         log_file = home / ".local/log/memory-routing-hook.log"
         write_config(home, legacy=True)
         other = home / "notes.md"
         other.write_text("---\ntype: project\n---\n", encoding="utf-8")
-        out = run(home, str(other), disable_env="HARNESS_MANAGEMENT_DISABLED")
-        cases.append(("disabled + non-memory write: silent, no log write", out == "" and not log_file.exists()))
         out = run(home, str(other))
-        cases.append(("enabled + non-memory write: silent, no log write", out == "" and not log_file.exists()))
+        cases.append(("non-memory write: silent, no log write", out == "" and not log_file.exists()))
 
     ok = True
     for label, passed in cases:

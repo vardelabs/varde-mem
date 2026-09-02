@@ -58,9 +58,9 @@ def default_memory_dir() -> Path:
 def _trip_types_from(text: str):
     """trip_types keys from config text; None if unusable (bad JSON, non-dict,
     `enabled` not true, or no trip_types). Honors `enabled` the same way the hook
-    does, so a config that disables routing (`enabled: false`) yields no trip set
-    and a scheduled pass does not route -- disable the write-time advisory alone
-    via MEMORY_HYGIENE_DISABLED, not by flipping `enabled`."""
+    does, so a config with `enabled: false` yields no trip set and a scheduled pass
+    does not route. The config is the only gate for both halves: there is no env
+    off-switch, so to stop routing set `enabled: false` or remove the config."""
     try:
         cfg = json.loads(text)
     except (json.JSONDecodeError, ValueError):

@@ -49,9 +49,8 @@ mis-routed, so scanner and hook agree on what is vault-bound. `memory_path_regex
 optionally overrides the default auto-memory-path matcher. `$AGENT_VAULT` names the
 vault the advisory points at.
 
-Disable per-tenant by naming a component in `MEMORY_HYGIENE_DISABLED` (the legacy
-`HARNESS_MANAGEMENT_DISABLED` is also honored), e.g.
-`MEMORY_HYGIENE_DISABLED=enforce-memory-routing`.
+The config is the only gate. With no usable config the hook no-ops; there is no
+separate env off-switch. To stop routing, remove the config or set `enabled: false`.
 
 ## Tests
 
@@ -64,7 +63,7 @@ python3 tests/smoke-snapshot.py
 The hook suite runs `enforce-memory-routing.py` against a throwaway `$HOME`: the
 opt-in gate, trip-type matching (bare, quoted, hyphenated, and inline-commented
 YAML values), the silent cases, the canonical/legacy config-path fallback, the
-dual-honor disable env, the `memory_path_regex` override, the null- and
+`memory_path_regex` override, the null- and
 undecodable-canonical handling, filename sanitization in the advisory, Windows-path
 parity, and the hot-path no-disk-write guarantee.
 

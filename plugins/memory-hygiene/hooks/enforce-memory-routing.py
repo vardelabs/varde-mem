@@ -20,9 +20,9 @@ OPT-IN PER TENANT. With no config (or `enabled` not true) the hook no-ops:
 
 The canonical path is `~/.config/memory-hygiene/memory-routing.json`; when absent the
 hook falls back to `~/.config/harness-management/memory-routing.json` (the pair's
-pre-move path). See hooks/memory-routing.config.example.json. Disable by naming
-`enforce-memory-routing` in $MEMORY_HYGIENE_DISABLED (legacy $HARNESS_MANAGEMENT_DISABLED
-dual-honored). Always exits 0.
+pre-move path). See hooks/memory-routing.config.example.json. The config is the only
+gate: with no usable config the hook no-ops, and there is no separate off-switch.
+Always exits 0.
 """
 
 import json
@@ -132,12 +132,6 @@ def frontmatter_type(text: str) -> str:
     return m.group(1).strip().lower() if m else ""
 
 
-def _disabled_in(env_name: str) -> bool:
-    return "enforce-memory-routing" in {
-        s.strip() for s in os.environ.get(env_name, "").split(",") if s.strip()
-    }
-
-
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -151,10 +145,6 @@ def main() -> int:
     file_path = tool_input.get("file_path")
     if not isinstance(file_path, str) or not file_path:
         return 0  # missing/non-string path (e.g. NotebookEdit's notebook_path)
-
-    # Disable-env first, so a disabled hook does ZERO disk work.
-    if _disabled_in("MEMORY_HYGIENE_DISABLED") or _disabled_in("HARNESS_MANAGEMENT_DISABLED"):
-        return 0
 
     # Pure config read before the path guard, so a tenant's memory_path_regex can
     # act as a TRUE override of the default matcher. All disk writes stay deferred
