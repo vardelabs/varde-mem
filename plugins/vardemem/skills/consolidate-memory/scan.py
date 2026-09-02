@@ -54,15 +54,10 @@ def default_memory_dir() -> Path:
 
 
 def _trip_types_from(text: str):
-    """Parse trip_types keys from config text; None if unusable (malformed JSON,
-    non-dict, or no non-empty trip_types map).
-
-    NOTE: `trip_types` is read regardless of `enabled`. `enabled` gates the
-    write-time HOOK's advisory; the periodic scanner is a separate detector and
-    still uses a tenant's custom vault-bound types to find misroutes even when the
-    reflexive hook is switched off. Scanner and hook therefore agree on WHICH types
-    are vault-bound (this shared trip_types set); `enabled` is an action gate on
-    the hook, not part of the vault-bound definition."""
+    """trip_types keys from config text; None if unusable (bad JSON, non-dict, or
+    no trip_types). Read regardless of `enabled`: `enabled` gates the hook's
+    advisory, but the scanner is a separate detector and still uses a tenant's
+    vault-bound types when the hook is switched off."""
     try:
         cfg = json.loads(text)
     except (json.JSONDecodeError, ValueError):
@@ -76,28 +71,12 @@ def _trip_types_from(text: str):
 
 
 def load_vault_types() -> set:
-    """Frontmatter `type:` values that count as mis-routed. Read from the same
-    per-tenant config the enforce-memory-routing hook uses (`trip_types` keys),
-    so scanner and hook agree on which frontmatter types are vault-bound. Mirrors
-    the hook's read-order EXACTLY: only an ABSENT (unreadable) canonical
-    `~/.config/vardemem/memory-routing.json` falls back to the legacy
-    `~/.config/harness-management/memory-routing.json` (printing a one-line note
-    when legacy serves). A PRESENT canonical is authoritative even when its content
-    is null / malformed / empty: it does NOT trigger legacy fallback, matching the
-    hook (which treats a present-but-null canonical as a present-authoritative
-    degenerate config, not a fallback trigger). Conflating those two would be a
-    scanner/hook divergence (a `null` canonical making the scanner serve legacy
-    while the hook did not).
-
-    Divergence-by-design in the terminal fallback: where NEITHER a present
-    authoritative canonical NOR (on absence) legacy yields a usable `trip_types`
-    map, the scanner returns the built-in DEFAULT_VAULT_TYPES so a periodic run
-    still catches obvious misroutes, whereas the opt-in hook no-ops (`{}`) on the
-    same input. The two agree on the vault-bound set whenever a usable config is
-    present; they differ only here (detector default vs opt-in silence)."""
-    # Only an ABSENT canonical serves legacy. A PRESENT canonical is authoritative
-    # even if null / malformed, so a present-but-null canonical does not strand the
-    # scanner on legacy while the hook stays on canonical.
+    """Frontmatter `type:` values that count as mis-routed: the config's trip_types
+    keys, so scanner and hook agree on what is vault-bound. Same read-order as the
+    hook (only an absent canonical falls back to legacy; a present-but-null
+    canonical is authoritative). When no usable config resolves, fall back to
+    DEFAULT_VAULT_TYPES so a periodic run still catches obvious misroutes -- the one
+    point where the detector diverges from the opt-in hook, which no-ops instead."""
     types = None
     ctext = None
     canonical_absent = False
