@@ -115,10 +115,11 @@ def frontmatter_type(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return ""
-    # Optional surrounding quotes and a trailing YAML inline comment; the value may
-    # contain digits and hyphens (`type: project-fact`, `type: "project"`, and
-    # `type: project # note` all read as the bare form).
-    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?\s*(?:#.*)?$""", text[3:end], re.MULTILINE)
+    # Optional surrounding quotes and a trailing YAML inline comment (which needs
+    # whitespace before the #, so a # inside the value is not mistaken for one); the
+    # value may contain digits and hyphens (`type: project-fact`, `type: "project"`,
+    # and `type: project # note` all read as the bare form).
+    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?(?:\s+#.*)?\s*$""", text[3:end], re.MULTILINE)
     return m.group(1).strip().lower() if m else ""
 
 
@@ -201,11 +202,13 @@ def main() -> int:
     vault_env = os.environ.get("AGENT_VAULT", "").strip()
     vault_name = Path(vault_env).name if vault_env else "your vault"
     name = Path(file_path).name
-    # The filename is DATA, not instructions. Strip backticks and newlines before
-    # embedding it in the model-facing advisory so a crafted name cannot close the
-    # code span and inject text into the next turn's context. The log keeps the raw
-    # name (a local file, never model context).
-    safe_name = re.sub(r"[`\r\n]+", "", name)[:200]
+    # The filename is DATA, not instructions. Strip every line boundary
+    # (str.splitlines covers \n, \r, vertical tab, form feed, U+2028/U+2029, NEL,
+    # etc.) and backticks before embedding it in the model-facing advisory, so a
+    # crafted name can neither start a new instruction line nor close the code span
+    # and inject text into the next turn's context. The log keeps the raw name (a
+    # local file, never model context).
+    safe_name = "".join(name.splitlines()).replace("`", "")[:200]
     log(f"flagged mis-route: {name} (type={ftype})")
     advisory = (
         f"Routing check: the memory you just wrote (`{safe_name}`) has frontmatter "

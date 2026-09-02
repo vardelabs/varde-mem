@@ -111,10 +111,11 @@ def parse_frontmatter_type(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return ""
-    # Optional surrounding quotes and a trailing YAML inline comment; the value may
-    # contain digits and hyphens (`type: project-fact`, `type: "project"`, and
-    # `type: project # note` all read as the bare form).
-    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?\s*(?:#.*)?$""", text[3:end], re.MULTILINE)
+    # Optional surrounding quotes and a trailing YAML inline comment (which needs
+    # whitespace before the #, so a # inside the value is not mistaken for one); the
+    # value may contain digits and hyphens (`type: project-fact`, `type: "project"`,
+    # and `type: project # note` all read as the bare form).
+    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?(?:\s+#.*)?\s*$""", text[3:end], re.MULTILINE)
     return m.group(1).strip().lower() if m else ""
 
 
