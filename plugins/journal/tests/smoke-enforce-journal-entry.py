@@ -548,6 +548,13 @@ with tempfile.TemporaryDirectory() as tmp:
     led = ej.Ledger("good-id", Path(tmp) / "state")
     check("a block slot is exclusive", led.claim_block_slot(1) is True and led.claim_block_slot(1) is False)
     check("blocks() counts the taken slot", led.blocks() == 1)
+    ro = Path(tmp) / "ro-state"; ro.mkdir(); os.chmod(ro, 0o500)
+    try:
+        led_ro = ej.Ledger("ro-sess", ro)
+        check("claim_block_slot fails open on an unwritable state dir",
+              led_ro.claim_block_slot(1) is False and led_ro.blocks() == 0)
+    finally:
+        os.chmod(ro, 0o700)  # restore so the tempdir can be cleaned up
     old = Path(tmp) / "state" / "ancient.json"; old.write_text("{}", encoding="utf-8")
     os.utime(old, (0, 0))
     led.prune()
