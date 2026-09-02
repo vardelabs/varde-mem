@@ -69,18 +69,30 @@ def main() -> int:
             run_snap(home, md)
         cases.append(("prune keeps the last 10", len(list(snaproot(home).iterdir())) == 10))
 
-    # 4. the prune removes entries by their slash-stripped path, so a symlinked entry
-    # is unlinked rather than followed into its target.
+    # 4. END-TO-END symlink safety: a MARKED symlink to an external directory, made
+    # the oldest entry, is pruned by the REAL snapshot.sh as a LINK -- its target and
+    # sentinel survive. This runs the script's own prune (not a replica), so it fails
+    # if the emit site ever loses its ${d%/} strip and rm -rf follows the link.
     with tempfile.TemporaryDirectory() as td:
-        sr = Path(td) / "sr"; (sr / "target").mkdir(parents=True)
-        (sr / "target" / "sentinel").write_text("x", encoding="utf-8")
-        os.symlink(sr / "target", sr / "oldlink")
-        # the script emits the stripped path (${d%/}) and rm -rf's it; replicate that.
-        subprocess.run(["bash", "-c", f'old="{sr}/oldlink/"; rm -rf "${{old%/}}"'], check=True)
-        idiom_ok = (sr / "target" / "sentinel").exists() and not (sr / "oldlink").exists()
-        script_strips_slash = "${d%/}" in SNAP.read_text(encoding="utf-8")
-        cases.append(("prune removes a symlinked entry as a link (script strips the slash)",
-                      idiom_ok and script_strips_slash))
+        home = Path(td); md = make_memdir(home / "work")
+        sr = snaproot(home); sr.mkdir(parents=True, exist_ok=True)
+        external = Path(td) / "external"; external.mkdir()
+        (external / MARKER).touch()  # makes the symlink count as a tool snapshot
+        (external / "sentinel").write_text("precious", encoding="utf-8")
+        link = sr / "oldlink"; os.symlink(external, link)
+        # oldest marked entry, robust to lstat-vs-stat ordering (touch link AND target)
+        subprocess.run(["touch", "-t", "200001010000", str(external)], check=True)
+        subprocess.run(["touch", "-h", "-t", "200001010000", str(link)], check=True)
+        for _ in range(10):  # 10 real + the symlink = 11 marked -> prune the 1 oldest (the link)
+            run_snap(home, md)
+        try:  # a regressed strip would follow the link and wipe the sentinel
+            target_survived = (external / "sentinel").read_text(encoding="utf-8") == "precious"
+        except OSError:
+            target_survived = False
+        link_pruned = not link.is_symlink() and not link.exists()
+        marked = [d for d in sr.iterdir() if (d / MARKER).is_file()]
+        cases.append(("real prune removes a marked symlink as a link; target survives",
+                      target_survived and link_pruned and len(marked) == 10))
 
     # 5. pruning is gated on the ownership MARKER, not the name: unmarked dirs a user
     # keeps in the snapshot root survive whatever they are named -- letter-prefixed,
