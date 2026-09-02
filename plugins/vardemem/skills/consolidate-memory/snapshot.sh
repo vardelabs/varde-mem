@@ -41,11 +41,11 @@ cp -r "$MEMDIR" "$DEST"
 echo "snapshot: $DEST"
 
 # Prune to the last $KEEP snapshots (newest first). Match ONLY tool-created
-# snapshots: their names start with the timestamp year, so the `[0-9]*` glob never
-# selects an unrelated directory a user or another tool kept in the snapshot root.
-# Strip the glob's trailing slash before rm: `rm -rf "symlink/"` would FOLLOW a
-# symlinked entry and delete its target's contents, whereas `rm -rf "symlink"`
-# removes only the link.
-ls -1dt "$SNAPROOT"/[0-9]*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
+# snapshots by their name shape -- eight date digits (YYYYMMDD) then a dash -- so
+# the glob cannot select an unrelated directory kept in the snapshot root, not even
+# one whose name merely starts with a digit (e.g. 2024-backup). Strip the glob's
+# trailing slash before rm: `rm -rf "symlink/"` would FOLLOW a symlinked entry and
+# delete its target's contents, whereas `rm -rf "symlink"` removes only the link.
+ls -1dt "$SNAPROOT"/[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
   rm -rf "${old%/}"
 done
