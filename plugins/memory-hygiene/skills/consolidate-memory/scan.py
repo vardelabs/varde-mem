@@ -60,7 +60,8 @@ def _trip_types_from(text: str):
     `enabled` not true, or no trip_types). Honors `enabled` the same way the hook
     does, so a config with `enabled: false` yields no trip set and a scheduled pass
     does not route. The config is the only gate for both halves: there is no env
-    off-switch, so to stop routing set `enabled: false` or remove the config."""
+    off-switch, so to stop routing set `enabled: false` in the canonical config
+    (authoritative even over a legacy fallback), not merely delete one config file."""
     try:
         cfg = json.loads(text)
     except (json.JSONDecodeError, ValueError):

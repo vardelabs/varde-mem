@@ -50,7 +50,10 @@ optionally overrides the default auto-memory-path matcher. `$AGENT_VAULT` names 
 vault the advisory points at.
 
 The config is the only gate. With no usable config the hook no-ops; there is no
-separate env off-switch. To stop routing, remove the config or set `enabled: false`.
+separate env off-switch. To stop routing, set `enabled: false` in the canonical
+config: a present-but-disabled canonical config is authoritative and suppresses the
+legacy fallback. Deleting the canonical config stops routing only when no enabled
+config remains on the legacy fallback path either.
 
 ## Tests
 
