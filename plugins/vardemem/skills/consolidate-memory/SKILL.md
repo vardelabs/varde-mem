@@ -111,7 +111,8 @@ bash "$SKILL_DIR/snapshot.sh" "$MEMDIR"
 
 Copies the dir to `~/.local/state/memory-snapshots/<timestamp>/` and prunes to
 the last 10. Restore with
-`rsync -a --delete <snapshot_dir>/ ~/.claude/projects/<slug>/memory/`.
+`rsync -a --delete --exclude=.vardemem-snapshot <snapshot_dir>/ ~/.claude/projects/<slug>/memory/`
+(the `--exclude` keeps snapshot.sh's ownership marker out of the restored dir).
 
 ### 3. Classify each memory (read them, don't trust filenames)
 
