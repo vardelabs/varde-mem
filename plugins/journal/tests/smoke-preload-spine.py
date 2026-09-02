@@ -28,8 +28,7 @@ Covers, in order:
   7. recency              -- the fit keeps the NEWEST lines, not the oldest
   8. no handoff           -- a missing/unslugged cache still gets its spine;
                              the cache-side note belongs to the cache hook
-  9. disable switch       -- `preload-spine` in $JOURNAL_DISABLED (and the
-                             legacy $HARNESS_MANAGEMENT_DISABLED still honored)
+  9. disable switch       -- `preload-spine` in $HARNESS_MANAGEMENT_DISABLED
  10. _fit_spine hard clamp -- an oversized HEAD line alone cannot push the
                              return past `allowance` (North review, PR #1535)
  11. read timeout         -- a read that times out gets the visible note
@@ -62,6 +61,11 @@ Covers, in order:
  23. top-level fail-open  -- a main() crash surfaces one (fail-open, #1383)
                              stderr note and still exits 0, not a silent
                              swallow (#2125)
+ 24. platform branch      -- Windows resolves real Windows directories instead
+                             of falling into the POSIX list (where it resolved
+                             nothing, forever, silently), and NO env var
+                             spelling of "home" can redirect the search on
+                             either platform (#2296, extending #1962)
 
 The `3a`-`3g` cases that stood here covered the Git-worktree allowlist that
 resolved a spine script by walking up from the cwd. #1962 deleted that machinery
@@ -256,9 +260,8 @@ _OVERRIDE_RUNNER = (
 )
 
 
-def run_hook(cwd, vault=None, slug="kai", disabled="preload-live-github",
-             journal_disabled="", event="SessionStart",
-             extra_path=None, env_overrides=None, home=None):
+def run_hook(cwd, vault=None, slug="kai", disabled="preload-live-github", event="SessionStart",
+             extra_path=None, env_overrides=None, home=None, journal_disabled=""):
     """Run the hook and return (returncode, additionalContext). The live-GitHub
     phase is disabled by default: it is another module's behaviour, and leaving it
     on would put the network in the middle of a spine assertion.
@@ -276,9 +279,9 @@ def run_hook(cwd, vault=None, slug="kai", disabled="preload-live-github",
     if slug is not None:
         env["HANDOFF_OPERATOR_SLUG"] = slug
     env["HARNESS_MANAGEMENT_DISABLED"] = disabled
-    # $JOURNAL_DISABLED is the current disable switch; set it explicitly (empty
-    # by default) so an ambient value cannot contaminate a run either.
-    env["JOURNAL_DISABLED"] = journal_disabled
+    env.pop("JOURNAL_DISABLED", None)
+    if journal_disabled:
+        env["JOURNAL_DISABLED"] = journal_disabled
     # NOT $HOME. The resolver reads the passwd entry precisely because $HOME is
     # settable by the same untrusted repo the fixed list defends against, and an
     # env-var test seam would be that exploit wearing a lab coat.
@@ -349,13 +352,24 @@ def main():
             root = Path(td)
             vault = make_vault(root / "vault")
             real_tool = real.resolve_vardemem()
-            if real_tool:
+            # The `$HOME` seam below only redirects the log on POSIX. On
+            # Windows `Path.home()` consults `%USERPROFILE%` first, so
+            # `LOG_FILE` still lands in the operator's real home and this read
+            # raises FileNotFoundError. That was invisible until #2296 made
+            # `resolve_vardemem()` capable of returning a tool on Windows at
+            # all, which is what first made this branch reachable there.
+            # Tracked in #2301 with the LOG_FILE derivation itself; skipped
+            # rather than silently weakened, so the POSIX coverage is unchanged.
+            if real_tool and os.name == "nt":
+                print("skip 1b log assertion on Windows: $HOME does not move "
+                      "Path.home() there (#2301)")
+            elif real_tool:
                 (vault / "Operations" / "Activity" / "Journal").mkdir(parents=True)
                 log_home = root / "log-home"
                 log_home.mkdir()
                 rc, ctx = run_hook(vault, vault=vault,
                                    env_overrides={"HOME": str(log_home)})
-                log_text = (log_home / ".local" / "log" / "preload-spine-hook.log").read_text(encoding="utf-8", errors="replace")
+                log_text = (log_home / ".local" / "log" / "preload-spine-hook.log").read_text(encoding="utf-8")
                 check(rc == 0, "1b unmodified hook exits 0")
                 check("name 'pwd' is not defined" not in log_text,
                       "1b unmodified hook has no hidden resolver error")
@@ -530,18 +544,17 @@ def main():
         # --- 9. the disable switch --------------------------------------------
         primary = make_vault(tmp / "disable")
         primary_home = make_home(tmp / "disable-home")
-        # $JOURNAL_DISABLED is the current switch, checked first.
         rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home,
-                           journal_disabled="preload-spine")
+                           disabled="preload-live-github",
+                           journal_disabled="x,preload-spine")
         check(rc == 0 and SPINE_MARK not in ctx,
               "9 disabled: `preload-spine` in $JOURNAL_DISABLED suppresses the phase")
-        # The legacy $HARNESS_MANAGEMENT_DISABLED it shipped under in the monolith
-        # is still honored, both for the new name and for the old combined hook's
-        # `preload-session-cache`.
         rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home,
                            disabled="preload-live-github,preload-spine")
         check(rc == 0 and SPINE_MARK not in ctx,
-              "9 legacy env: `preload-spine` in $HARNESS_MANAGEMENT_DISABLED still suppresses the phase")
+              "9 legacy: `preload-spine` in $HARNESS_MANAGEMENT_DISABLED still suppresses")
+        # The handoff force-load lives in preload-session-cache.py and is unaffected
+        # there; this file only owns the spine switch.
         rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home,
                            disabled="preload-live-github,preload-session-cache")
         check(rc == 0 and SPINE_MARK not in ctx,
@@ -617,12 +630,10 @@ def main():
             hook_mod._vardemem_search_dirs = lambda d=str(
                 (ok_home / VARDEMEM_REL).parent): (d,)
             # Direct call, not run_hook(): _disabled() reads THIS process's
-            # real os.environ, so an ambient $JOURNAL_DISABLED or the legacy
-            # $HARNESS_MANAGEMENT_DISABLED (aliasing preload-session-cache) would
-            # short-circuit build_spine_block before the deadline logic under
-            # test runs. Clear both.
+            # real os.environ, so an ambient HARNESS_MANAGEMENT_DISABLED
+            # (aliasing preload-session-cache) would short-circuit
+            # build_spine_block before the deadline logic under test runs.
             _real_disabled = os.environ.pop("HARNESS_MANAGEMENT_DISABLED", None)
-            _real_journal_disabled = os.environ.pop("JOURNAL_DISABLED", None)
             try:
                 block = hook_mod.build_spine_block(
                     str(vault), 4096, time.monotonic() - 1.0)
@@ -630,8 +641,6 @@ def main():
                 hook_mod._vardemem_search_dirs = _real_search_dirs
                 if _real_disabled is not None:
                     os.environ["HARNESS_MANAGEMENT_DISABLED"] = _real_disabled
-                if _real_journal_disabled is not None:
-                    os.environ["JOURNAL_DISABLED"] = _real_journal_disabled
             check("did not produce a read" in block,
                   "11 an already-spent hook clock is visible too, not silent")
 
@@ -705,9 +714,7 @@ def main():
         # build_spine_block return "" for every allowance below, trivially
         # passing the check. The 700 case returns "" regardless, under
         # SPINE_MIN_ALLOWANCE; 1500 and 4096 are the ones the leak was hiding.
-        # Clear both the current $JOURNAL_DISABLED and the legacy env.
         _real_disabled_fb = os.environ.pop("HARNESS_MANAGEMENT_DISABLED", None)
-        _real_journal_disabled_fb = os.environ.pop("JOURNAL_DISABLED", None)
         try:
             for tight_allowance in (700, 1500, 4096):
                 block = hook_mod.build_spine_block(
@@ -728,8 +735,6 @@ def main():
             hook_mod._vardemem_search_dirs = real_search_dirs_fb
             if _real_disabled_fb is not None:
                 os.environ["HARNESS_MANAGEMENT_DISABLED"] = _real_disabled_fb
-            if _real_journal_disabled_fb is not None:
-                os.environ["JOURNAL_DISABLED"] = _real_journal_disabled_fb
 
         # --- 13. an unfittable pointer is DROPPED, never truncated mid-word ---
         # A head large enough that even the WORST-CASE pointer doesn't fit
@@ -1098,20 +1103,156 @@ def main():
     # as __main__ with main() forced to raise, so the real `if __name__ ==
     # "__main__"` guard fires.
     import contextlib
-    crash_src = HOOK.read_text(encoding="utf-8", errors="replace").replace(
+    crash_src = HOOK.read_text(encoding="utf-8").replace(
         "def main() -> int:",
         "def main() -> int:\n    raise RuntimeError('forced crash for case 23')\n")
     crash_stderr = io.StringIO()
     crash_code = "no-systemexit"
     try:
         with contextlib.redirect_stderr(crash_stderr):
-            exec(compile(crash_src, str(HOOK), "exec"), {"__name__": "__main__"})
+            # `__file__` is supplied because the hook resolves its sibling
+            # imports from it. Letting it be absent used to be tolerated by a
+            # cwd fallback in the hook, which put the session's working
+            # directory on sys.path ahead of a security-boundary module; the
+            # fallback was removed, so the test states where the file lives
+            # rather than making production guess.
+            exec(compile(crash_src, str(HOOK), "exec"),
+                 {"__name__": "__main__", "__file__": str(HOOK)})
     except SystemExit as e:
         crash_code = e.code
     crash_out = crash_stderr.getvalue()
     check(crash_code == 0, "23 a main() crash still exits 0 (fail-open)")
     check("(fail-open, #1383)" in crash_out and "preload-spine.py" in crash_out,
           "23 and surfaces one #1383 note on stderr, not a silent swallow")
+
+    # --- 24. the platform branch resolves somewhere real, un-redirectably ---
+    # Windows fell into the `pwd`-missing fallback, which returns three POSIX
+    # paths. Those resolve to nothing there, so the hook was not "a host
+    # without a spine" but "a host that could never have one", silently. This
+    # pins the branch AND the property that makes it safe: the search dirs are
+    # never movable by an environment variable, on either platform.
+    spec24 = importlib.util.spec_from_file_location("preload_spine_plat", HOOK)
+    m24 = importlib.util.module_from_spec(spec24)
+    spec24.loader.exec_module(m24)
+    dirs24 = m24._vardemem_search_dirs()
+    names24 = m24._vardemem_names()
+
+    if os.name == "nt":
+        check(bool(dirs24), "24 Windows resolves at least one search directory")
+        check(not any(d.startswith("/") for d in dirs24),
+              "24 Windows returns no POSIX path (the old silent-no-op bug)")
+        check(names24 == ("vardemem", "vardemem.py"),
+              "24 Windows accepts the copied .py spelling, since symlinking "
+              "needs a privilege the host may not grant")
+    else:
+        check(names24 == ("vardemem",),
+              "24 POSIX still takes exactly the documented symlink name")
+        check("/usr/local/bin" in dirs24 and "/usr/bin" in dirs24,
+              "24 POSIX list is unchanged by the Windows branch")
+
+    # 24b. The Windows directory shape, exercised on EVERY platform. The merge
+    # gate is ubuntu-latest, so an `os.name == "nt"` body runs zero times
+    # there; for a `.ci-relaxed` plugin the suite is the only gate, so the
+    # branch has to be reachable as a pure function or it is untested.
+    win_dirs = m24._windows_search_dirs(os.path.join("X:", "prof"))
+    check(len(win_dirs) == 2, "24b Windows shape yields exactly two dirs")
+    check(win_dirs[0].endswith(os.path.join(
+              "prof", "AppData", "Local", "Programs", "vardemem")),
+          "24b per-user Programs dir is first")
+    check(win_dirs[1].endswith(os.path.join("prof", ".local", "bin")),
+          "24b .local/bin is second")
+    check(all(d.startswith(os.path.join("X:", "prof")) for d in win_dirs),
+          "24b BOTH entries hang off the one token-derived root, so a single "
+          "trusted lookup covers the whole list")
+
+    # 24c. resolve_vardemem's loop: the `.py` spelling resolves, and DIRECTORY
+    # order outranks FILENAME order. Flipping the two loops is the classic
+    # transcription error for this shape and would silently invert the
+    # documented preference, so it is pinned rather than described.
+    with tempfile.TemporaryDirectory() as td24:
+        first, second = Path(td24) / "first", Path(td24) / "second"
+        first.mkdir(); second.mkdir()
+        real_dirs24, real_names24 = (m24._vardemem_search_dirs,
+                                     m24._vardemem_names)
+        try:
+            m24._vardemem_search_dirs = lambda: (str(first), str(second))
+            m24._vardemem_names = lambda: ("vardemem", "vardemem.py")
+
+            # Only the `.py` spelling exists, and only in the second dir.
+            py_only = second / "vardemem.py"
+            py_only.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            py_only.chmod(0o755)
+            check(m24.resolve_vardemem() == str(py_only),
+                  "24c the copied .py spelling resolves (the realistic Windows "
+                  "install, since symlinking needs a privilege)")
+
+            # Now the LATER-named spelling sits in the EARLIER directory.
+            # Directory order must win.
+            bare_first = first / "vardemem"
+            bare_first.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            bare_first.chmod(0o755)
+            check(m24.resolve_vardemem() == str(bare_first),
+                  "24c directory order outranks filename order")
+
+            # And within one directory, the bare name is preferred.
+            py_first = first / "vardemem.py"
+            py_first.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+            py_first.chmod(0o755)
+            check(m24.resolve_vardemem() == str(bare_first),
+                  "24c within a directory the bare name still wins")
+        finally:
+            m24._vardemem_search_dirs = real_dirs24
+            m24._vardemem_names = real_names24
+
+    # 24d. THE SECURITY ASSERTION, and the reason this branch is not just
+    # `expanduser`. Poisoning every env var that spells "home" must not put an
+    # attacker-chosen directory in the list. A SHORTER list is acceptable
+    # (fail-open, same as an uninstalled host); a REDIRECTED one is the #1962
+    # exploit reopened on a second platform.
+    #
+    # THE DECOY MUST EXIST. The first version of this case poisoned to a
+    # non-existent path, which made the assertion vacuous: `SHGetKnownFolderPath`
+    # verifies existence under KF_FLAG_DEFAULT, so the redirect it meant to
+    # catch showed up as a failed call, and the check passed against a live
+    # vulnerability. Creating the decoy is what gives this teeth (PR #2300
+    # cross-model review, which reproduced the redirect).
+    with tempfile.TemporaryDirectory() as decoy_root:
+        decoy = Path(decoy_root) / "poisonhome"
+        (decoy / "AppData" / "Local" / "Programs" / "vardemem").mkdir(parents=True)
+        (decoy / ".local" / "bin").mkdir(parents=True)
+        probe = (
+            "import importlib.util,sys\n"
+            "s=importlib.util.spec_from_file_location('p',sys.argv[1])\n"
+            "m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
+            "print('\\n'.join(m._vardemem_search_dirs()))\n"
+        )
+        poisoned_env = dict(os.environ)
+        poisoned_env.update({
+            "HOME": str(decoy), "USERPROFILE": str(decoy),
+            "LOCALAPPDATA": str(decoy / "AppData" / "Local"),
+            "APPDATA": str(decoy / "AppData" / "Roaming"),
+            "HOMEDRIVE": "", "HOMEPATH": str(decoy),
+        })
+        got24 = subprocess.run([sys.executable, "-c", probe, str(HOOK)],
+                               capture_output=True, text=True,
+                               encoding="utf-8", errors="replace", timeout=30,
+                               env=poisoned_env)
+        check(got24.returncode == 0,
+              "24d the resolver does not raise under a poisoned environment")
+        # Ordered deliberately: prove stdout is non-empty BEFORE asserting what
+        # is absent from it. An empty capture satisfies any "not in" check, and
+        # that is not hypothetical here -- unpinned text=True decodes with the
+        # locale codec, and on Windows a cp1252 failure kills the reader thread
+        # and hands back returncode 0 with stdout None (#1386). That would make
+        # this case vacuous a second time, by a different mechanism than the
+        # non-existent sentinel it already had.
+        check(got24.stdout.strip() != "",
+              "24d the probe actually returned directories, so the absence "
+              "check below cannot pass on an empty capture")
+        check(str(decoy) not in got24.stdout,
+              "24d an EXISTING attacker-controlled home does not redirect "
+              "where the tool is resolved from (#1962 on both platforms; the "
+              "decoy exists, so this cannot pass vacuously)")
 
     if FAILURES:
         print(f"\n---- FAIL: {len(FAILURES)} failed ----")
