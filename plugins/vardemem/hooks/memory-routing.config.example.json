@@ -1,0 +1,8 @@
+{
+  "_comment": "Per-tenant opt-in config for enforce-memory-routing.py. Copy to $HOME/.config/vardemem/memory-routing.json (the canonical path) and edit the routing advice for your vault. The hook and consolidate-memory/scan.py fall back to $HOME/.config/harness-management/memory-routing.json when the canonical path is absent. With no config (or enabled != true) the hook no-ops. trip_types maps a memory frontmatter `type:` to the routing advice the hook injects when a memory of that type is written to the auto-memory dir. memory_path_regex is optional (default matches any .claude/projects/<slug>/memory/<file>.md).",
+  "enabled": true,
+  "trip_types": {
+    "project": "a project or company fact. Fold it into your vault's canonical file for that project or company, then delete the scratch copy.",
+    "user": "a person fact. Fold it into that person's contact file in your vault, then delete the scratch copy."
+  }
+}
