@@ -34,7 +34,9 @@ DEST="$SNAPROOT/$(date +%Y%m%d-%H%M%S-%N)"
 cp -r "$MEMDIR" "$DEST"
 echo "snapshot: $DEST"
 
-# Prune to the last $KEEP snapshots (newest first).
+# Prune to the last $KEEP snapshots (newest first). Strip the glob's trailing
+# slash before rm: `rm -rf "symlink/"` would FOLLOW a symlinked entry and delete
+# its target's contents, whereas `rm -rf "symlink"` removes only the link.
 ls -1dt "$SNAPROOT"/*/ 2>/dev/null | tail -n +$((KEEP + 1)) | while read -r old; do
-  rm -rf "$old"
+  rm -rf "${old%/}"
 done

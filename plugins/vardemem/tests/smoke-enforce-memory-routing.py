@@ -184,6 +184,16 @@ def main() -> int:
         out = run(home, str(mem / "quoted.md"))
         cases.append(("quoted frontmatter type trips", '"additionalContext"' in out and "vault" in out))
 
+        # a hyphenated/digit type value is parsed and matches a hyphenated trip_type key.
+        clear_configs(home)
+        hy_cfg = json.dumps({"enabled": True, "trip_types": {"project-fact": "a project fact. Fold it into your vault."}})
+        (mem / "hyphen.md").write_text("---\nname: t\ntype: project-fact\n---\nbody\n", encoding="utf-8")
+        rc, out = run_rc(home, json.dumps({"tool_name": "Write", "tool_input": {"file_path": str(mem / "hyphen.md")}}), cfg=hy_cfg)
+        cases.append(("hyphenated frontmatter type trips a hyphenated key",
+                      rc == 0 and '"additionalContext"' in out and "vault" in out))
+        clear_configs(home)
+        write_config(home, enabled=True)
+
         # fail-open: a bad payload/config must not crash. A malformed memory_path_regex
         # must DEGRADE to the default matcher and keep working, so assert the advisory
         # fires (a crash would also exit 0, so rc==0 alone cannot tell them apart).

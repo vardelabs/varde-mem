@@ -56,15 +56,16 @@ def default_memory_dir() -> Path:
 
 
 def _trip_types_from(text: str):
-    """trip_types keys from config text; None if unusable (bad JSON, non-dict, or
-    no trip_types). Read regardless of `enabled`: `enabled` gates the hook's
-    advisory, but the scanner is a separate detector and still uses a tenant's
-    vault-bound types when the hook is switched off."""
+    """trip_types keys from config text; None if unusable (bad JSON, non-dict,
+    `enabled` not true, or no trip_types). Honors `enabled` the same way the hook
+    does, so a config that disables routing (`enabled: false`) yields no trip set
+    and a scheduled pass does not route -- disable the write-time advisory alone
+    via VARDEMEM_DISABLED, not by flipping `enabled`."""
     try:
         cfg = json.loads(text)
     except (json.JSONDecodeError, ValueError):
         return None
-    if not isinstance(cfg, dict):
+    if not isinstance(cfg, dict) or cfg.get("enabled") is not True:
         return None
     tt = cfg.get("trip_types")
     if isinstance(tt, dict) and tt:
@@ -110,8 +111,9 @@ def parse_frontmatter_type(text: str) -> str:
     end = text.find("\n---", 3)
     if end == -1:
         return ""
-    # Optional surrounding quotes: YAML `type: "project"` is equivalent to `type: project`.
-    m = re.search(r"""^\s*type:\s*["']?([A-Za-z_]+)["']?\s*$""", text[3:end], re.MULTILINE)
+    # Optional surrounding quotes; the value may contain digits and hyphens
+    # (a `type: project-fact` or `type: "project"` is read the same as the bare form).
+    m = re.search(r"""^\s*type:\s*["']?([A-Za-z0-9_-]+)["']?\s*$""", text[3:end], re.MULTILINE)
     return m.group(1).strip().lower() if m else ""
 
 

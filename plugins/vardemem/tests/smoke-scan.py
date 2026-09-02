@@ -90,6 +90,27 @@ def main() -> int:
         cases.append(("F2: unreadable (directory) canonical does not use legacy -> SKIP",
                       rc == 0 and verdict(out) == "SKIP" and "served from legacy" not in out))
 
+    # scanner honors `enabled`: an enabled:false config yields no trip set, so
+    # misroute detection is off (routing is not done on a schedule when disabled).
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 2, "project")
+        d = home / ".config/vardemem"; d.mkdir(parents=True, exist_ok=True)
+        (d / "memory-routing.json").write_text(
+            json.dumps({"enabled": False, "trip_types": {"project": "x"}}), encoding="utf-8")
+        rc, out = run_scan(home, md)
+        cases.append(("enabled:false config -> SKIP (routing honors enabled)",
+                      rc == 0 and verdict(out) == "SKIP"))
+
+    # a hyphenated trip_type key + a hyphenated memory type trips (parser accepts hyphens/digits).
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 2, "project-fact")
+        d = home / ".config/vardemem"; d.mkdir(parents=True, exist_ok=True)
+        (d / "memory-routing.json").write_text(
+            json.dumps({"enabled": True, "trip_types": {"project-fact": "x"}}), encoding="utf-8")
+        rc, out = run_scan(home, md)
+        cases.append(("hyphenated type + matching config -> NEEDS_RUN",
+                      rc == 0 and verdict(out) == "NEEDS_RUN"))
+
     ok = True
     for label, passed in cases:
         print(f"  [{'PASS' if passed else 'FAIL'}] {label}")
