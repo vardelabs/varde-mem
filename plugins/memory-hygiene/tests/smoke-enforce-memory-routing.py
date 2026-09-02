@@ -151,6 +151,13 @@ def main() -> int:
         write_config(home, enabled=False, legacy=True)   # legacy disabled, must be ignored
         out = run(home, write_mem(home, "proj7.md", "project"))
         cases.append(("canonical config preferred over legacy", '"additionalContext"' in out and "vault" in out))
+        # A DISABLED canonical must suppress an ENABLED legacy fallback: with no env
+        # kill-switch, enabled:false at the canonical path is a migrating tenant's only
+        # off-switch, so a regression here would silently revive the advisory.
+        write_config(home, enabled=False)                # canonical disabled
+        write_config(home, enabled=True, legacy=True)    # legacy enabled, must NOT serve
+        out = run(home, write_mem(home, "proj8.md", "project"))
+        cases.append(("disabled canonical suppresses enabled legacy", out == ""))
         clear_configs(home)
 
         # non-memory path + nested metadata.type

@@ -101,6 +101,18 @@ def main() -> int:
         cases.append(("enabled:false config -> SKIP (routing honors enabled)",
                       rc == 0 and verdict(out) == "SKIP"))
 
+    # A DISABLED canonical must suppress an ENABLED legacy fallback (scanner half): with
+    # no env kill-switch, enabled:false at the canonical path is a migrating tenant's only stop.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 2, "project")
+        d = home / ".config/memory-hygiene"; d.mkdir(parents=True, exist_ok=True)
+        (d / "memory-routing.json").write_text(
+            json.dumps({"enabled": False, "trip_types": {"project": "x"}}), encoding="utf-8")
+        write_cfg(home, legacy=True)  # enabled legacy, must NOT serve
+        rc, out = run_scan(home, md)
+        cases.append(("disabled canonical suppresses enabled legacy -> SKIP",
+                      rc == 0 and verdict(out) == "SKIP" and "served from legacy" not in out))
+
     # a hyphenated trip_type key + a hyphenated memory type trips (parser accepts hyphens/digits).
     with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 2, "project-fact")
