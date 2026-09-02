@@ -343,6 +343,10 @@ with tempfile.TemporaryDirectory() as tmp:
           run(payload(sid, t.write(), str(repo)), home, env_vault) == (False, ""))
 
     print("heredoc bodies are data")
+    check("a `vardemem put` satisfier AFTER an UNQUOTED heredoc still satisfies (no double-strip false fire)",
+          satisfied("hdthenput", lambda t: t.call("Bash", {"command": "cat > /srv/issue.md <<EOF\ncontext for the issue\nEOF\nvardemem put 2026-09-02 \"shipped the gate\""})))
+    check("a `cp` into the journal AFTER an UNQUOTED heredoc still satisfies",
+          satisfied("hdthencp", lambda t: t.call("Bash", {"command": f"cat > /srv/x.md <<EOF\nbody\nEOF\ncp /srv/x.md {journal}/journal-2026-09-02.md"})))
     check("a heredoc body holding a real `vardemem put <date>` line does not satisfy",
           not satisfied("hdput", lambda t: t.call("Bash", {"command": "cat > /srv/issue.md <<'EOF'\nvardemem put 2026-09-02 'example only'\nEOF"})))
     sid, t = new_session(tmp, "hdcommit")
@@ -567,6 +571,19 @@ with tempfile.TemporaryDirectory() as tmp:
     check("claim_stop admits a different stop_key", led_c.claim_stop("k2") is True)
     check("claim_stop refuses a traversal id", ej.Ledger("bad/../id", Path(tmp) / "state").claim_stop("k") is False)
     check("blocks() counts the taken slot", led.blocks() == 1)
+    # The home-resolution branch of _trust_file_path (the real production path
+    # when no absolute $VARDEMEM_TRUST_FILE override is set) is otherwise
+    # untested, since every trust-walk case above uses the override. Prime
+    # agent_home's cache with a temp home and assert the trust file lands under it.
+    import agent_home
+    os.environ.pop("VARDEMEM_TRUST_FILE", None)
+    fake_home = Path(tmp) / "faux-home"
+    agent_home._CACHED = str(fake_home)
+    try:
+        check("_trust_file_path resolves under the OS home when no override is set",
+              ej._trust_file_path() == fake_home / ".config" / "vardemem" / "trust.json")
+    finally:
+        agent_home._CACHED = agent_home._UNSET
     ro = Path(tmp) / "ro-state"; ro.mkdir(); os.chmod(ro, 0o500)
     try:
         led_ro = ej.Ledger("ro-sess", ro)

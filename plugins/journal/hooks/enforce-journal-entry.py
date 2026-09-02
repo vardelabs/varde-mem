@@ -581,14 +581,24 @@ def strip_heredocs(cmd: str) -> str:
     return "\n".join(out)
 
 
-def segments(cmd: str):
-    """Each shell segment of `cmd` with its leaders stripped, in order."""
+def _split_segments(cleaned: str):
+    """Split ALREADY-CLEANED text (heredocs and quotes removed) into segments,
+    each with its leaders stripped. Kept separate from `segments()` so a caller
+    that already stripped heredocs does not strip them a SECOND time: the second
+    pass re-finds an opener whose terminator the first pass removed, opens a
+    heredoc that never closes, and drops every satisfier after it (a false fire)."""
     out = []
-    for raw in SEGMENT_SPLIT_RE.split(strip_quotes(strip_heredocs(cmd[:MAX_CMD_SCAN]))):
+    for raw in SEGMENT_SPLIT_RE.split(cleaned):
         seg = LEADER_RE.sub("", raw.strip(), count=1)
         if seg:
             out.append(seg)
     return out
+
+
+def segments(cmd: str):
+    """Each shell segment of a RAW command with its leaders stripped, in order.
+    Strips heredoc bodies and quotes once, then splits."""
+    return _split_segments(strip_quotes(strip_heredocs(cmd[:MAX_CMD_SCAN])))
 
 
 def _journal_redirect_re(journal_rel: str, journal_abs: Path):
@@ -765,11 +775,15 @@ def satisfied_by(call, journal_abs: Path, journal_rel: str, redirect_re) -> bool
         # Bounded scan: the redirect pattern backtracks per `>` on a long run
         # of non-separator text, and a pasted blob is not where a journal
         # write hides. Heredoc bodies are data and are stripped first.
+        # Strip heredocs ONCE here (quoted-target-preserving), then split the
+        # result directly with _split_segments -- NOT segments(), which would
+        # strip heredocs a second time and drop a satisfier that follows an
+        # unquoted heredoc.
         cmd = strip_quotes_keep_targets(strip_heredocs(_command(call)[:MAX_CMD_SCAN]))
         if redirect_re.search(cmd):
             return True
         return any(SPINE_PUT_RE.match(seg) or _copies_into_journal(seg, journal_abs, journal_rel)
-                   for seg in segments(cmd))
+                   for seg in _split_segments(cmd))
     return False
 
 
