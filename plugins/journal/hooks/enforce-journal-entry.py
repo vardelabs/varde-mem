@@ -141,12 +141,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from agent_home import trusted_home  # noqa: E402  (sibling module)
+from agent_home import trusted_home, env_override_or_home  # noqa: E402
 
 HOOK_NAME = "enforce-journal-entry"
 CONFIG_FILE = "journal-entry.json"
 
-CONFIG_DIR = Path.home() / ".config/journal"
+# Per-tenant config location. An absolute $JOURNAL_CONFIG_DIR overrides the
+# default so a tenant is not forced to write under the PASSWD home; else
+# <trusted home>/.config/journal. Resolved the way agent_home.config_path
+# resolves harness-management's, against this plugin's own dir, so config is
+# disk-located, never derived from a spoofable $HOME (see #2310).
+CONFIG_DIR_ENV = "JOURNAL_CONFIG_DIR"
 STATE_DIR = Path.home() / ".local/state/journal"
 LOG_DIR = Path.home() / ".local/log"
 
@@ -247,7 +252,10 @@ def read_regular(path: Path):
 def load_config() -> "dict | None":
     """The tenant's opt-in config with defaults applied, or None to no-op.
     PURE READ: never writes, mkdirs, or logs."""
-    raw = read_regular(CONFIG_DIR / CONFIG_FILE)
+    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal")
+    if base is None:
+        return None
+    raw = read_regular(Path(base) / CONFIG_FILE)
     if raw is None:
         return None
     try:
@@ -776,7 +784,7 @@ def satisfied_by(call, journal_abs: Path, journal_rel: str, redirect_re) -> bool
         # of non-separator text, and a pasted blob is not where a journal
         # write hides. Heredoc bodies are data and are stripped first.
         # Strip heredocs ONCE here (quoted-target-preserving), then split the
-        # result directly with _split_segments -- NOT segments(), which would
+        # result directly with _split_segments, NOT segments(), which would
         # strip heredocs a second time and drop a satisfier that follows an
         # unquoted heredoc.
         cmd = strip_quotes_keep_targets(strip_heredocs(_command(call)[:MAX_CMD_SCAN]))

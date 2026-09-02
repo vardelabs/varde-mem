@@ -34,6 +34,7 @@ no-op, a wrong candidate is a location an attacker chooses.
 """
 
 import os
+from pathlib import Path
 
 try:
     import pwd  # POSIX only; absent on Windows, a real host for these hooks.
@@ -103,6 +104,60 @@ def _windows_profile_dir(log=None):
         if log:
             log(f"agent_home: Windows profile lookup unavailable ({exc!r})")
         return None
+
+
+CONFIG_DIR_ENV = "HARNESS_MANAGEMENT_CONFIG_DIR"
+
+
+def _is_truly_absolute(value):
+    """`os.path.isabs`, minus the drive-relative shapes it accepts on Windows.
+
+    On Windows before Python 3.13, `ntpath.isabs("/x")` and `isabs("\\\\x")` are
+    True even though both are DRIVE-RELATIVE: they resolve against whatever
+    drive the process is on, which for these hooks is the walked tree's. That
+    is exactly the cwd-derived resolution the absolute check exists to refuse,
+    so an override of `/sneaky` would have been honoured on the pinned 3.12 CI
+    while being refused on 3.14. Requiring a drive letter closes it on every
+    version."""
+    if not value:
+        return False
+    if os.name == "nt":
+        return bool(os.path.splitdrive(value)[0]) and os.path.isabs(value)
+    return os.path.isabs(value)
+
+
+def env_override_or_home(env_name, *parts, log=None):
+    """An ABSOLUTE `$env_name` outright, else `<trusted home>/<parts>`, else None.
+
+    One implementation of the override shape this plugin uses in two places
+    (this and vardemem's `$VARDEMEM_TRUST_FILE`), so the drive-relative defect
+    above is fixed once rather than per copy."""
+    override = os.environ.get(env_name, "").strip()
+    if _is_truly_absolute(override):
+        return override
+    home = trusted_home(log)
+    if home is None:
+        return None
+    return os.path.join(home, *parts)
+
+
+def config_path(name, log=None):
+    """Absolute path to one of this plugin's per-tenant hook configs, or None.
+
+    Resolved LAZILY by the caller, never at import. Two reasons, both real:
+    the hooks document a strict "payload first, disable-env second, disk work
+    third" ordering that a module-scope lookup jumps ahead of, and the lookup
+    is not free (a passwd entry that may be an NSS network call on POSIX, three
+    DLL loads plus a token open on Windows) on a PostToolUse hook that fires
+    for every Write and returns immediately for almost all of them.
+
+    Pass `log` so an unresolvable home is recorded rather than read as
+    "nothing configured"."""
+    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "harness-management",
+                                log=log)
+    if base is None:
+        return None
+    return Path(base) / name
 
 
 def trusted_home(log=None):

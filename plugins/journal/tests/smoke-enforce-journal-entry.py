@@ -55,6 +55,10 @@ def run(payload, home, env=None, timeout=5):
     """Run the hook; return (blocked: bool, reason: str). A hang is a FAILURE."""
     e = dict(os.environ)
     e["HOME"] = str(home)
+    # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from
+    # $HOME (see #2310). Point it at the throwaway home's config dir so the
+    # suite stays hermetic and never reads the developer's real config.
+    e["JOURNAL_CONFIG_DIR"] = str(Path(home) / CFG_DIR)
     e.pop("JOURNAL_DISABLED", None); e.pop("HARNESS_MANAGEMENT_DISABLED", None)
     e.pop("AGENT_VAULT", None)
     e.pop("TMPDIR", None)
@@ -248,6 +252,20 @@ with tempfile.TemporaryDirectory() as tmp:
     check("trusted walk from inside the vault resolves the journal: BLOCK",
           run(payload(sid, t.write(), str(vault / "Rules")), home,
               {"VARDEMEM_TRUST_FILE": str(trust_file)})[0] is True)
+
+    # #2310 guard: config is disk-located via $JOURNAL_CONFIG_DIR, never derived
+    # from $HOME. A spoofed $HOME carrying an enabled config must not force a
+    # block when the absolute override points at a dir that has none.
+    sid, t = new_session(tmp, "homespoof")
+    attacker = Path(tmp) / "attacker-home"
+    (attacker / CFG_DIR).mkdir(parents=True, exist_ok=True)
+    (attacker / CFG_DIR / "journal-entry.json").write_text(
+        json.dumps({"enabled": True}), encoding="utf-8")
+    empty_cfg = Path(tmp) / "empty-cfg"; empty_cfg.mkdir(parents=True, exist_ok=True)
+    t.prompt(); t.call("Bash", {"command": "git commit -m 'x'"})
+    check("enabled config under a spoofed $HOME is ignored; the override wins: silent",
+          run(payload(sid, t.write(), str(repo)), attacker,
+              {**env_vault, "JOURNAL_CONFIG_DIR": str(empty_cfg)}) == (False, ""))
 
     sid, t = new_session(tmp, "threshold")
     write_cfg(home, {"enabled": True, "min_work_events": 2})
@@ -477,7 +495,7 @@ with tempfile.TemporaryDirectory() as tmp:
     sid, t = new_session(tmp, "concurrent")
     t.prompt(); t.call("Edit", {"file_path": str(repo / "a.py"), "old_string": "a", "new_string": "b"})
     tp = t.write()
-    e = dict(os.environ); e.update({"HOME": str(home), **env_vault}); e.pop("JOURNAL_DISABLED", None); e.pop("HARNESS_MANAGEMENT_DISABLED", None)
+    e = dict(os.environ); e.update({"HOME": str(home), "JOURNAL_CONFIG_DIR": str(Path(home) / CFG_DIR), **env_vault}); e.pop("JOURNAL_DISABLED", None); e.pop("HARNESS_MANAGEMENT_DISABLED", None)
     def race(payloads):
         """Start every process, feed all stdins, THEN collect, so they overlap."""
         procs = [subprocess.Popen([sys.executable, str(HOOK)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
