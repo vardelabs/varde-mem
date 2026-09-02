@@ -159,6 +159,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("disabled via legacy $HARNESS_MANAGEMENT_DISABLED: silent",
           run(payload(sid, str(t.path), str(repo)), home,
               {**env_vault, "HARNESS_MANAGEMENT_DISABLED": "enforce-journal-entry"}) == (False, ""))
+    check("disabled via legacy $HARNESS_MANAGEMENT_DISABLED=stop-gate umbrella: silent",
+          run(payload(sid, str(t.path), str(repo)), home,
+              {**env_vault, "HARNESS_MANAGEMENT_DISABLED": "x,stop-gate"}) == (False, ""))
+    check("$JOURNAL_DISABLED=stop-gate does NOT disable (umbrella is legacy-only): BLOCK",
+          run(payload(sid, str(t.path), str(repo)), home,
+              {**env_vault, "JOURNAL_DISABLED": "stop-gate"})[0] is True)
     check("stop_hook_active: silent",
           run(payload(sid, str(t.path), str(repo), active=True), home, env_vault) == (False, ""))
 
@@ -447,6 +453,15 @@ with tempfile.TemporaryDirectory() as tmp:
     t.text("and again")
     third = run(payload(sid, t.write(), str(repo)), home, env_vault)[0]
     check("max_blocks_per_session 2: blocks twice, then passes", (first, second, third) == (True, True, False))
+    # Same-Stop dedupe at budget>1: the SAME transcript (same stop_key) run
+    # twice must block once, not twice, even with budget to spare. Without the
+    # per-Stop claim, one Stop invoked twice would take two slots.
+    sid, t = new_session(tmp, "budget2samestop")
+    t.prompt(); t.call("Edit", {"file_path": str(repo / "a.py"), "old_string": "a", "new_string": "b"})
+    tp = t.write()
+    a1 = run(payload(sid, tp, str(repo)), home, env_vault)[0]
+    a2 = run(payload(sid, tp, str(repo)), home, env_vault)[0]
+    check("budget 2, same Stop run twice: blocks once (per-Stop dedupe)", (a1, a2) == (True, False))
     write_cfg(home, {"enabled": True})
 
     # Reset to the default budget: the concurrency tests below assert exactly
@@ -547,6 +562,10 @@ with tempfile.TemporaryDirectory() as tmp:
     check("Ledger refuses a traversal id", led.valid is False and led.claim_block_slot(1) is False)
     led = ej.Ledger("good-id", Path(tmp) / "state")
     check("a block slot is exclusive", led.claim_block_slot(1) is True and led.claim_block_slot(1) is False)
+    led_c = ej.Ledger("claim-id", Path(tmp) / "state")
+    check("claim_stop is exclusive per stop_key", led_c.claim_stop("k1") is True and led_c.claim_stop("k1") is False)
+    check("claim_stop admits a different stop_key", led_c.claim_stop("k2") is True)
+    check("claim_stop refuses a traversal id", ej.Ledger("bad/../id", Path(tmp) / "state").claim_stop("k") is False)
     check("blocks() counts the taken slot", led.blocks() == 1)
     ro = Path(tmp) / "ro-state"; ro.mkdir(); os.chmod(ro, 0o500)
     try:

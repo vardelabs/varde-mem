@@ -17,12 +17,16 @@ promise / broken-commitment detector) could compose with this one on a single
 Stop. That second hook does not exist yet, and when it is built it will live in
 another plugin and repo, which a Claude Code hook cannot import across at
 runtime (each hook runs under its own CLAUDE_PLUGIN_ROOT). So the shared
-machinery only ever coordinated one real hook. It is inlined here. If the
-promise detector is ever built and a single-block-per-Stop guarantee across two
-gates is genuinely wanted, extract the reader and ledger THEN, as an installed,
-securely-resolved module both hooks import from a fixed trusted path (the
-`vardemem`-binary resolution pattern), and let that hook's real needs shape the
-interface rather than a guess made before it existed.
+machinery only ever coordinated one real hook. It is inlined here. What the
+inline dropped is the multi-DETECTOR framework (a `Detector` registry and its
+dispatch); what it KEEPS is the per-Stop `claim_stop` and the numbered budget
+slots, because those are not multi-detector plumbing: even one hook needs them
+to hold "block a given Stop at most once" when `max_blocks_per_session > 1`
+and the hook runs in overlapping processes. If the promise detector is ever
+built and a single-block-per-Stop guarantee ACROSS two gates is wanted,
+extract the reader and ledger THEN, as an installed, securely-resolved module
+both hooks import from a fixed trusted path (the `vardemem`-binary resolution
+pattern), and let that hook's real needs shape the interface.
 
 WHAT COUNTS AS SUBSTANTIVE WORK (bias: do not fire).
 ----------------------------------------------------
@@ -135,10 +139,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-try:
-    import pwd
-except ImportError:  # a host with no passwd database has no trusted walk
-    pwd = None
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from agent_home import trusted_home  # noqa: E402  (sibling module)
 
 HOOK_NAME = "enforce-journal-entry"
 CONFIG_FILE = "journal-entry.json"
@@ -214,13 +217,16 @@ def log(msg: str) -> None:
 
 
 def disabled() -> bool:
-    """True when this hook is named in $JOURNAL_DISABLED (or, still honored,
-    the legacy $HARNESS_MANAGEMENT_DISABLED it shipped under in the monolith)."""
-    for var in ("JOURNAL_DISABLED", "HARNESS_MANAGEMENT_DISABLED"):
-        raw = os.environ.get(var, "")
-        if HOOK_NAME in {p.strip() for p in raw.split(",") if p.strip()}:
-            return True
-    return False
+    """True when this hook is named in $JOURNAL_DISABLED, or in the legacy
+    $HARNESS_MANAGEMENT_DISABLED it shipped under in the monolith. The legacy
+    var also honors the `stop-gate` umbrella token the shared substrate
+    accepted, so a tenant who set it before the move stays disabled."""
+    def named(var):
+        return {p.strip() for p in os.environ.get(var, "").split(",") if p.strip()}
+    if HOOK_NAME in named("JOURNAL_DISABLED"):
+        return True
+    legacy = named("HARNESS_MANAGEMENT_DISABLED")
+    return HOOK_NAME in legacy or "stop-gate" in legacy
 
 
 def read_regular(path: Path):
@@ -410,6 +416,26 @@ class Ledger:
             return 0
         return sum(1 for n in range(64) if self._slot(n).exists())
 
+    def claim_stop(self, stop_key: str) -> bool:
+        """Take a one-time claim for THIS Stop, keyed by stop_key. True exactly
+        once per (session, stop_key) across processes. Deduping by Stop is why
+        `max_blocks_per_session > 1` cannot let a single Stop, invoked in
+        overlapping processes, consume more than one budget slot: the numbered
+        slots cap the COUNT, this caps it to one-per-distinct-Stop."""
+        if not self.valid or not STOP_KEY_RE.match(stop_key or ""):
+            return False
+        try:
+            self.state_dir.mkdir(parents=True, exist_ok=True)
+            claim = self.state_dir / f"{self.session_id}.{HOOK_NAME}.{stop_key}.claim"
+            fd = os.open(claim, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return False
+        except OSError as e:
+            log(f"state dir {self.state_dir} unwritable ({e}); no claim, passing")
+            return False
+        os.close(fd)
+        return True
+
     def claim_block_slot(self, budget: int) -> bool:
         """Atomically take one of `budget` block slots for this session.
         Two overlapping processes with different Stop keys cannot both win
@@ -479,14 +505,20 @@ def _budget(cfg: dict) -> int:
 
 def _trust_file_path():
     """Mirrors vardemem: an ABSOLUTE `$VARDEMEM_TRUST_FILE` wins outright;
-    otherwise `~/.config/vardemem/trust.json` under the PASSWD home, never
-    `$HOME`, which the walked tree could itself have set."""
+    otherwise `~/.config/vardemem/trust.json` under a home resolved from the
+    OS, never `$HOME` / `%USERPROFILE%`, which the walked tree could itself
+    have set.
+
+    WINDOWS (#2301). Reading the passwd entry directly returned None whenever
+    `pwd` was missing, which on Windows is always, so no trust file was ever
+    found and the whole gate was a permanent silent no-op on a real operator
+    machine. `agent_home.trusted_home()` answers on both platforms from the
+    OS, so the gate resolves a journal on Windows too."""
     override = os.environ.get(TRUST_FILE_ENV, "").strip()
     if override and os.path.isabs(override):
         return Path(override)
-    try:
-        home = pwd.getpwuid(os.getuid()).pw_dir
-    except (KeyError, OSError, AttributeError):
+    home = trusted_home(log)
+    if home is None:
         return None
     return Path(home) / ".config" / "vardemem" / "trust.json"
 
@@ -850,6 +882,9 @@ def _emit_block(ledger, budget, stop_key, session_id, reason, summary):
         return None
     if ledger.blocks() >= budget:
         log(f"budget spent ({budget}) for session {session_id}; passing")
+        return None
+    if not ledger.claim_stop(stop_key):
+        log(f"stop {stop_key} already blocked for session {session_id}; passing")
         return None
     if not ledger.claim_block_slot(budget):
         log(f"budget spent ({budget}) for session {session_id} under overlap; passing")
