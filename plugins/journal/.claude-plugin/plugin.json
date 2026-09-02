@@ -1,0 +1,4 @@
+{
+  "name": "journal",
+  "description": "Journal-discipline tooling for a VardeMem-backed agent: the Journal is the append-only store VardeMem indexes, and these hooks keep it well-formed and non-empty. enforce-journal-entry (a Stop hook) blocks a session once when it did substantive work and wrote nothing to the Journal resolved from .vardemem.json, so no session feeds the memory system nothing. enforce-journal-tags (a PreToolUse hook) denies a new Journal entry that carries no category tag. Both are opt-in per tenant (config under ~/.config/journal/), fail-open, and disable-able by name in $JOURNAL_DISABLED (the legacy $HARNESS_MANAGEMENT_DISABLED is honored). The journal path is never hardcoded; it is resolved the way vardemem resolves it (trusted walk from cwd for .vardemem.json, then $AGENT_VAULT). Version lives in the consuming marketplace, never here."
+}
