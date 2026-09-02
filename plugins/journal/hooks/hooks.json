@@ -1,5 +1,27 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','preload-spine.py') if r else None; (sys.stderr.write('[journal] preload-spine: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
+    "PostCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','preload-spine.py') if r else None; (sys.stderr.write('[journal] preload-spine: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "timeout": 12
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit",
