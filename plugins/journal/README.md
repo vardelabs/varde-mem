@@ -64,11 +64,15 @@ Opt in with a config under the trusted (passwd/token) home at
 `$HOME` (#2310), and `$JOURNAL_CONFIG_DIR` (absolute) overrides it. Tests:
 `tests/smoke-enforce-journal-tags.py`.
 
-## Arriving in a stacked follow-up
+## `preload-spine.py` (SessionStart + PostCompact)
 
-One more journal hook joins this plugin in a stacked PR: `preload-spine` (the
-SessionStart hook that injects VardeMem's episodic spine, moved from the
-monolith).
+Runs the installed `vardemem` binary to inject the episodic spine (a decayed
+index over the Journal) into agent context at session start and after a
+compaction. It moved here from the monolith because the spine is a VardeMem
+artifact, built by `vardemem` and read by every agent. Resolution, fencing, and
+budgets are unchanged from the reviewed hook. Disable via `$JOURNAL_DISABLED`
+(legacy `$HARNESS_MANAGEMENT_DISABLED` honored). Tests:
+`tests/smoke-preload-spine.py`.
 
 ## Disabling
 
