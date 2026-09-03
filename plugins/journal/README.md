@@ -48,13 +48,27 @@ inlined. If that detector is built and a single-block-per-Stop guarantee across
 two gates is genuinely wanted, extract the reader and ledger then, as an
 installed, securely-resolved module both hooks import from a fixed trusted path.
 
-## Arriving in stacked follow-ups
+## `enforce-journal-tags.py` (PreToolUse hook)
 
-Two more journal hooks join this plugin in stacked PRs: `enforce-journal-tags`
-(the quality gate, a PreToolUse hook denying an untagged new entry; moved and
-renamed from the monolith's `enforce-daily-note-tags`) and `preload-spine` (the
+Denies a write that **adds** an untagged entry to a Daily Note (a bold
+lead-in at column 0 followed by prose, e.g. `[decision] **Retired the charter
+model.** Kai's call.`). It diffs the before- and after-documents rather than
+the raw tool input, so overwriting or appending to a note full of legacy
+untagged entries is never blocked; only an entry the write genuinely adds or
+edits is gated. Moved and renamed from the monolith's
+`enforce-daily-note-tags`, parser and threat model unchanged.
+
+Opt in with a config under the trusted (passwd/token) home at
+`<home>/.config/journal/journal-tags.json` (see
+`hooks/journal-tags.config.example.json`); the location is not derived from
+`$HOME` (#2310), and `$JOURNAL_CONFIG_DIR` (absolute) overrides it. Tests:
+`tests/smoke-enforce-journal-tags.py`.
+
+## Arriving in a stacked follow-up
+
+One more journal hook joins this plugin in a stacked PR: `preload-spine` (the
 SessionStart hook that injects VardeMem's episodic spine, moved from the
-monolith). This PR ships the existence gate and the plugin scaffold.
+monolith).
 
 ## Disabling
 

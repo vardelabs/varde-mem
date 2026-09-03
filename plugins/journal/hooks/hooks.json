@@ -1,5 +1,17 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','enforce-journal-tags.py') if r else None; (sys.stderr.write('[journal] enforce-journal-tags: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
