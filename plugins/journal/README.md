@@ -74,7 +74,6 @@ budgets are unchanged from the reviewed hook. Disable via `$JOURNAL_DISABLED`
 (legacy `$HARNESS_MANAGEMENT_DISABLED` honored). Tests:
 `tests/smoke-preload-spine.py`.
 
-
 ## Disabling
 
 Name a hook in `$JOURNAL_DISABLED` (comma-separated) to turn it off for a
