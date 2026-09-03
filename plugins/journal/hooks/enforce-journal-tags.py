@@ -239,13 +239,28 @@ def _disabled() -> bool:
     return False
 
 
+def _log(msg: str) -> None:
+    """Stderr, because this gate keeps no log file. It exists so an unresolvable
+    home is VISIBLE: "could not determine where to look" and "nothing is
+    configured" are different states, and silently reporting the first as the
+    second is the conflation agent_home was written to end (#2310)."""
+    try:
+        sys.stderr.write("[" + HOOK_NAME + "] " + msg + "\n")
+    except Exception:
+        pass
+
+
 def load_config() -> dict:
-    """Per-tenant opt-in config. PURE READ: never writes, mkdirs, or logs.
+    """Per-tenant opt-in config. PURE READ of config: never writes or mkdirs.
+
+    It DOES log once (to stderr, via _log) when the home cannot be resolved, so
+    that state is visible rather than read as "nothing configured" (#2310); that
+    is the whole reason agent_home takes a `log`.
 
     Returns the usable opt-in dict, or {} when there is no usable config (absent,
     malformed, or `enabled` not true), in which case the hook no-ops.
     """
-    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal")
+    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal", log=_log)
     if base is None:
         return {}
     raw = read_regular(Path(base) / CONFIG_FILE)  # a FIFO config would otherwise block forever

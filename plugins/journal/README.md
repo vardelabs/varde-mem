@@ -58,8 +58,10 @@ untagged entries is never blocked; only an entry the write genuinely adds or
 edits is gated. Moved and renamed from the monolith's
 `enforce-daily-note-tags`, parser and threat model unchanged.
 
-Opt in at `~/.config/journal/journal-tags.json` (see
-`hooks/journal-tags.config.example.json`). Tests:
+Opt in with a config under the trusted (passwd/token) home at
+`<home>/.config/journal/journal-tags.json` (see
+`hooks/journal-tags.config.example.json`); the location is not derived from
+`$HOME` (#2310), and `$JOURNAL_CONFIG_DIR` (absolute) overrides it. Tests:
 `tests/smoke-enforce-journal-tags.py`.
 
 ## Arriving in a stacked follow-up

@@ -555,6 +555,61 @@ with tempfile.TemporaryDirectory() as tmp:
     (Path(home) / CFG_DIR / "journal-tags.json").write_text("{ not json", encoding="utf-8")
     check("malformed config -> no-op (opt-in gate fails open)", run(w(UNTAGGED), home)[0] is False)
 
+    # ---- in-process: production fallback path + unresolvable-home visibility ----
+    # run() sets an absolute $JOURNAL_CONFIG_DIR on every subprocess case, so the
+    # fallback branch (no override, config under the trusted home's
+    # .config/journal) that every real install uses is otherwise untested. Load
+    # the hook in-process and exercise load_config directly.
+    print("in-process config resolution")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("et", HOOK)
+    et = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = et  # dataclasses/annotations resolve via sys.modules
+    spec.loader.exec_module(et)
+    import agent_home
+
+    cfg_home = Path(tmp) / "cfg-home"
+    (cfg_home / CFG_DIR).mkdir(parents=True, exist_ok=True)
+    (cfg_home / CFG_DIR / "journal-tags.json").write_text(
+        json.dumps({"enabled": True, "tags": ["ops"]}), encoding="utf-8")
+    _saved_home = os.environ.get("HOME")
+    _saved_jcd = os.environ.pop("JOURNAL_CONFIG_DIR", None)
+    os.environ["HOME"] = str(Path(tmp) / "no-config-home")
+    agent_home._CACHED = str(cfg_home)
+    try:
+        cfg = et.load_config()
+        check("load_config reads config from the trusted-home fallback (no override), not $HOME",
+              isinstance(cfg, dict) and cfg.get("enabled") is True)
+    finally:
+        agent_home._CACHED = agent_home._UNSET
+        if _saved_jcd is not None:
+            os.environ["JOURNAL_CONFIG_DIR"] = _saved_jcd
+        if _saved_home is not None:
+            os.environ["HOME"] = _saved_home
+
+    if os.name != "nt":
+        # Visibility (#2310): an unresolvable home must be RECORDED, not silently
+        # read as "nothing configured". Drive the real trusted_home failure path
+        # (pwd.getpwuid raising) with no override, and assert load_config no-ops
+        # AND logs. Fails if load_config drops the log= it passes.
+        agent_home._CACHED = agent_home._UNSET
+        _orig_pw = agent_home.pwd.getpwuid
+        _saved_jcd2 = os.environ.pop("JOURNAL_CONFIG_DIR", None)
+        logged = []
+        _orig_log = et._log
+        agent_home.pwd.getpwuid = lambda uid: (_ for _ in ()).throw(KeyError("no pwent"))
+        et._log = lambda m: logged.append(m)
+        try:
+            r = et.load_config()
+            check("unresolvable home: load_config no-ops AND records it (not silent)",
+                  r == {} and logged != [])
+        finally:
+            et._log = _orig_log
+            agent_home.pwd.getpwuid = _orig_pw
+            agent_home._CACHED = agent_home._UNSET
+            if _saved_jcd2 is not None:
+                os.environ["JOURNAL_CONFIG_DIR"] = _saved_jcd2
+
 print()
 if failures:
     print(f"FAILED ({len(failures)}): {', '.join(failures)}")
