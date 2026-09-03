@@ -564,7 +564,7 @@ with tempfile.TemporaryDirectory() as tmp:
     import importlib.util
     spec = importlib.util.spec_from_file_location("et", HOOK)
     et = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = et  # dataclasses/annotations resolve via sys.modules
+    sys.modules[spec.name] = et  # importlib hygiene; not load-bearing here (no dataclasses)
     spec.loader.exec_module(et)
     import agent_home
 
