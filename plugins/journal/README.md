@@ -31,8 +31,10 @@ nothing; this catches that.
   `~/.local/log/enforce-journal-entry-hook.log` only, never blocks). Run a
   tenant in observe mode first, read the log, then let it block.
 
-Opt in at `~/.config/journal/journal-entry.json` (see
-`hooks/journal-entry.config.example.json`). The block budget is a set of
+Opt in with a config under the trusted (passwd/token) home at
+`<home>/.config/journal/journal-entry.json` (see
+`hooks/journal-entry.config.example.json`); the location is not derived from
+`$HOME` (#2310), and `$JOURNAL_CONFIG_DIR` (absolute) overrides it. The block budget is a set of
 `O_EXCL` slot files under `~/.local/state/journal/`, so two overlapping Stop
 processes for one session cannot both block. Tests:
 `tests/smoke-enforce-journal-entry.py`.

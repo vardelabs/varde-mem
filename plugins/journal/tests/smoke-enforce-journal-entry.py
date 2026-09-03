@@ -602,6 +602,54 @@ with tempfile.TemporaryDirectory() as tmp:
               ej._trust_file_path() == fake_home / ".config" / "vardemem" / "trust.json")
     finally:
         agent_home._CACHED = agent_home._UNSET
+    # The config resolution's FALLBACK branch (no $JOURNAL_CONFIG_DIR override,
+    # config under the trusted home's .config/journal) is what every real install
+    # uses, yet run() sets the override on every subprocess case, so it is
+    # otherwise untested. Prime the home cache at a temp home that HOLDS an
+    # enabled config, clear the override, point $HOME at a home without one, and
+    # assert load_config() reads the trusted-home copy. This is the property
+    # #2310 restored; it fails if the fallback reverts to $HOME or its
+    # .config/journal parts change.
+    cfg_home = Path(tmp) / "cfg-home"
+    (cfg_home / ".config" / "journal").mkdir(parents=True, exist_ok=True)
+    (cfg_home / ".config" / "journal" / "journal-entry.json").write_text(
+        json.dumps({"enabled": True, "min_work_events": 1}), encoding="utf-8")
+    _saved_home = os.environ.get("HOME")
+    _saved_jcd = os.environ.pop("JOURNAL_CONFIG_DIR", None)
+    os.environ["HOME"] = str(Path(tmp) / "no-config-home")
+    agent_home._CACHED = str(cfg_home)
+    try:
+        cfg = ej.load_config()
+        check("load_config reads config from the trusted-home fallback (no override), not $HOME",
+              isinstance(cfg, dict) and cfg.get("enabled") is True)
+    finally:
+        agent_home._CACHED = agent_home._UNSET
+        if _saved_jcd is not None:
+            os.environ["JOURNAL_CONFIG_DIR"] = _saved_jcd
+        if _saved_home is not None:
+            os.environ["HOME"] = _saved_home
+    # Visibility (#2310): an unresolvable home must be RECORDED, not silently
+    # read as "nothing configured". Drive the real trusted_home failure path
+    # (pwd.getpwuid raising) with no override set, and assert load_config both
+    # no-ops AND logs. Fails if load_config drops the log= it passes.
+    if os.name != "nt":
+        agent_home._CACHED = agent_home._UNSET
+        _orig_pw = agent_home.pwd.getpwuid
+        _saved_jcd2 = os.environ.pop("JOURNAL_CONFIG_DIR", None)
+        logged = []
+        _orig_log = ej.log
+        agent_home.pwd.getpwuid = lambda uid: (_ for _ in ()).throw(KeyError("no pwent"))
+        ej.log = lambda m: logged.append(m)
+        try:
+            r = ej.load_config()
+            check("unresolvable home: load_config no-ops AND records it (not silent)",
+                  r is None and logged != [])
+        finally:
+            ej.log = _orig_log
+            agent_home.pwd.getpwuid = _orig_pw
+            agent_home._CACHED = agent_home._UNSET
+            if _saved_jcd2 is not None:
+                os.environ["JOURNAL_CONFIG_DIR"] = _saved_jcd2
     ro = Path(tmp) / "ro-state"; ro.mkdir(); os.chmod(ro, 0o500)
     try:
         led_ro = ej.Ledger("ro-sess", ro)

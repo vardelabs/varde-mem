@@ -251,8 +251,12 @@ def read_regular(path: Path):
 
 def load_config() -> "dict | None":
     """The tenant's opt-in config with defaults applied, or None to no-op.
-    PURE READ: never writes, mkdirs, or logs."""
-    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal")
+
+    PURE READ of config: never writes or mkdirs. It DOES log once when the home
+    cannot be resolved, so that state is visible ("could not determine where to
+    look") rather than silently read as "nothing configured" (#2310). That is
+    the whole reason agent_home takes a `log`."""
+    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal", log=log)
     if base is None:
         return None
     raw = read_regular(Path(base) / CONFIG_FILE)
