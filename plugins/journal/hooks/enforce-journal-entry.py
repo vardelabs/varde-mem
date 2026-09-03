@@ -116,7 +116,9 @@ with the instruction in context cures forgetfulness. `max_blocks_per_session`
 The budget is a set of `O_EXCL` slot files, so two overlapping Stop processes
 for one session cannot both block.
 
-OPT-IN PER TENANT at `~/.config/journal/journal-entry.json`; see
+OPT-IN PER TENANT with a config under the trusted (passwd/token) home at
+`<home>/.config/journal/journal-entry.json`, never derived from `$HOME`
+(#2310); set an absolute `$JOURNAL_CONFIG_DIR` to place it elsewhere. See
 `journal-entry.config.example.json`. Disable by naming `enforce-journal-entry`
 in `$JOURNAL_DISABLED` (the legacy `$HARNESS_MANAGEMENT_DISABLED` is honored).
 
