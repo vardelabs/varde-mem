@@ -1159,7 +1159,7 @@ def main():
               "24 POSIX list is unchanged by the Windows branch")
 
     # 24b. The Windows directory shape, exercised on EVERY platform. The merge
-    # gate is ubuntu-latest, so an `os.name == "nt"` body runs zero times
+    # gate runs on Linux, so an `os.name == "nt"` body runs zero times
     # there; for a `.ci-relaxed` plugin the suite is the only gate, so the
     # branch has to be reachable as a pure function or it is untested.
     win_dirs = m24._windows_search_dirs(os.path.join("X:", "prof"))

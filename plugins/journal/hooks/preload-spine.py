@@ -248,7 +248,7 @@ def _windows_search_dirs(profile):
     relocated it installs to the second entry instead.
 
     Split out from the platform branch so it runs on ANY host: the merge gate
-    is ubuntu-latest, where an `os.name == "nt"` body executes zero times, and
+    runs on Linux, where an `os.name == "nt"` body executes zero times, and
     for a `.ci-relaxed` plugin the test suite is the only gate there is. A
     reordering or a typo in here would otherwise merge green forever
     (PR #2300 review)."""

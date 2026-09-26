@@ -122,7 +122,8 @@ VardeMem tiles history with aligned power-of-two blocks whose detail thins with 
 | --- | --- |
 | `vardemem.py` | The tool. Implementation plus `selftest`. |
 | `CONTRIBUTING.md` | Pre-PR checklist and the boundaries a change keeps. |
-| `.github/workflows/` | CI: `selftest.yml` runs the property checks; `no-journal-content.yml` keeps real history out of the repo. |
+
+Cluster CI runs two checks. `selftest` runs the property checks and the plugin smoke suites on pull requests; `no-journal-content` keeps real history out of the repo. The jobs live in `vardelabs/toolkits`; see `ci/README.md` there.
 
 ## Contributing
 
