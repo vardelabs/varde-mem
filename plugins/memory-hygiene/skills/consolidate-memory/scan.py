@@ -202,6 +202,7 @@ def main() -> int:
         "file_count": len(files),
         "total_bytes": total_bytes,
         "oversized": [{"file": n, "bytes": sizes[n]} for n in oversized],
+        "unsized": unsized,
         "verdict": verdict,
         "reasons": reasons,
         "vault_types": sorted(vault_types),
@@ -224,7 +225,8 @@ def main() -> int:
 
     print(f"memory dir: {mem_dir}")
     print(f"files: {len(files)} (lean target <= 15, trip at {FILE_COUNT_TRIP})")
-    print(f"size: {total_bytes} B (lean target <= 40000, trip at {BYTES_TRIP})")
+    unknown = f", plus {len(unsized)} file(s) of unknown size" if unsized else ""
+    print(f"size: {total_bytes} B{unknown} (lean target <= 40000, trip at {BYTES_TRIP})")
     if oversized:
         print(f"oversized (>= {FILE_BYTES_TRIP} B, trim each to <= 6000): "
               + ", ".join(f"{n} ({sizes[n]} B)" for n in oversized))
