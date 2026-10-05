@@ -269,7 +269,8 @@ short one-line hook. No dangling references to deleted files.
 
 The memory dir is not version-controlled, so there is nothing to commit here: the
 writes are the durable result and the step-2 snapshot is the undo. Verify every
-`MEMORY.md` line points to an existing file and no fact was dropped.
+`MEMORY.md` line points to an existing file, and that no fact was dropped except
+the step 4b cuts the report lists.
 
 **The snapshot does NOT cover everything.** It restores the memory dir only. A
 MIS-ROUTED promotion commits to a vault repo, undone by reverting that commit, not
