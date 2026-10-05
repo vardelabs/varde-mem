@@ -5,7 +5,8 @@ description: >-
   into surface-clusters, promote mis-routed facts to the agent's vault, PROPOSE
   plugin-scoped surface knowledge for migration into the plugin that owns it
   (report only, never writes to a plugin), delete facts already covered in canon
-  (AGENTS.md / CLAUDE.md), and rebuild MEMORY.md, with a pre-pass snapshot that
+  (AGENTS.md / CLAUDE.md), aggressively trim every surviving file to a size budget,
+  and rebuild MEMORY.md, with a pre-pass snapshot that
   makes every change to the memory dir itself revertable (a vault commit is not).
   Run on a scheduled cadence
   (per-tenant job) or on demand ("consolidate my memory", "clean up auto-memory",
@@ -37,11 +38,17 @@ from the latest snapshot.
 
 - **Before mutating:** run the snapshot helper (step 2). It copies the dir to
   `~/.local/state/memory-snapshots/<timestamp>/` and keeps the last 10.
-- **Never delete a fact that isn't preserved elsewhere.** A memory may be deleted
-  ONLY when its content now lives in (a) a merged file in this dir, (b) the vault,
-  (c) canon (`AGENTS.md`, `<vault>/CLAUDE.md`, or the per-host `CLAUDE.md`), or
-  (d) a **MERGED** plugin catalog (POINTER ONLY, never deletion). When in doubt,
-  keep it.
+- **A fact leaves this dir in one of two ways.** Either it is PRESERVED elsewhere:
+  (a) a merged file in this dir, (b) the vault, (c) canon (`AGENTS.md`,
+  `<vault>/CLAUDE.md`, or the per-host `CLAUDE.md`), or (d) a **MERGED** plugin
+  catalog (POINTER ONLY, never deletion). Or it is CUT by step 4b's trim criteria,
+  which is a judgment that the fact is not worth its recall cost. The snapshot is
+  the undo for a cut, and step 7 lists every one.
+- **Lean is the default.** When in doubt about a fact's VALUE, cut it: the snapshot
+  keeps it, and a fact that matters gets re-learned and re-written. The two limits
+  that do NOT bend: a PLUGIN-SCOPED memory's per-deployment remainder, and an
+  operator's correction or stated preference that no canon or vault file states.
+  Compress those; never cut them.
 - (d) is MERGED-only, and this skill never creates that state: the PLUGIN-SCOPED
   class only PROPOSES a migration, and a human lands it. An unmerged branch
   preserves nothing. (d) also carries two hard limits (a SPLIT memory is never
@@ -51,7 +58,10 @@ from the latest snapshot.
 ## Autonomy boundary
 
 - **Auto-apply** (the snapshot makes it revertable): merging topic-clusters,
-  deleting canon-duplicates, and rebuilding `MEMORY.md`.
+  deleting canon-duplicates, trimming to the size budget (step 4b), and rebuilding
+  `MEMORY.md`. Do not defer a trim for the operator's approval: deciding what a
+  memory is worth is this skill's job, and the report plus the snapshot are the
+  operator's review.
 - **Vault-moves:** auto-apply when the fact has a clear, unambiguous vault home
   (commit the vault directly, no PR). If the home is ambiguous, do NOT guess: list
   it for the operator and leave the scratch copy in place.
@@ -81,7 +91,7 @@ python3 "$SKILL_DIR/scan.py" --dir "$MEMDIR"
   OPERATOR-REQUESTED run, the override below applies.
   - **Override, operator-requested runs only** ("consolidate my memory", "memory
     hygiene pass"): a SKIP does not end the run. Read the memories, report any
-    PLUGIN-SCOPED proposals (step 7), then stop. Skip steps 2 and 4-6.
+    PLUGIN-SCOPED proposals (step 7), then stop. Skip steps 2 and 4-6 (including 4b).
     - **Step 3 is READ-ONLY on this path.** You must enter step 3 (PLUGIN-SCOPED
       is defined there and is the only class this path acts on), but its other
       branches MUTATE and step 2 was skipped, so there is no snapshot to restore
@@ -213,7 +223,73 @@ per-deployment half that the scope boundary says must stay behind.
 For each surface-cluster, write ONE file `reference_<surface>_gotchas.md` (or the
 established name) with standard frontmatter (`name` / `description` /
 `metadata.type: reference`) and each source fact under its own `## ` subsection,
-preserving substance. Then delete the source files. No facts dropped.
+preserving substance. Then delete the source files. Merging drops no facts; the
+trim in step 4b is where facts are cut.
+
+### 4b. Trim every surviving file to the budget
+
+Read every file that survives steps 3 and 4, merged or not, and cut it down.
+
+**Budget:** at most 15 files, at most 40,000 bytes in total, and at most 6,000
+bytes in any one file (the scanner counts raw bytes, and KB here means 1,000
+bytes). These are targets, not trip points: the scanner trips at 18 files,
+60,000 bytes, or 8,000 bytes a file, and the pass trims well below that so the
+next run stays a SKIP.
+
+**Protected facts: compress, never cut.** An operator's correction or stated
+preference that no canon or vault file states, and a PLUGIN-SCOPED memory's
+per-deployment remainder, are exempt from EVERY cut criterion below, even when one
+seems to fit. They may only be shortened.
+
+**Cut any other fact when it is any of these:**
+
+- **A war story.** A dated account of what happened ("On 2026-09-14 I ran X and Y
+  broke") whose lesson is stated as a rule. Keep the rule and a one-clause why; cut
+  the narrative, the dates, and the issue or PR numbers.
+- **Derivable.** Readable from the repo, `git log`, a config file, a tool's own
+  `--help`, or an issue tracker. A memory holds what those sources do not.
+- **Stale or resolved.** It names a file, flag, version, or PR state that is no
+  longer true, or an open question that has since been answered. Check the live
+  source; cut the fact when the check shows it false or resolved. A fact whose
+  check is not cheap stays unless another criterion here applies, because a
+  fact's age cannot be read once a merge has rewritten its file.
+- **A duplicate.** Stated in another memory file, or in a vault or canon file. Keep
+  the one copy in its best home. Cut duplicates LAST, after every other cut, and
+  only after confirming the copy you keep survives this pass: it sits in a file
+  that is not being deleted, and it was not itself cut. If you cannot confirm
+  that, keep both.
+- **Over-explained.** Reduce each fact to the rule, the why, and how to apply it.
+  Keep at most one example. Cut restatements, hedges, and history.
+
+**If a file is still over budget** after those cuts, cut its least critical
+facts: the ones a fresh session would lose least by re-learning. The
+protected facts above are exempt from this fallback too; if they alone
+keep a file over budget, leave it over and say so in the report. A file that trims
+to nothing worth keeping is deleted, and its index line goes with it.
+
+**If more than 15 files survive**, merge further by broader surface (for example,
+every git and GitHub file into one), using step 4's merge rules, which drop no
+facts. A file built by an earlier merge is a source like any other: its full
+content goes into the new file before it is deleted. Then trim the merged file to the per-file budget. A PLUGIN-SCOPED memory
+is never merged (step 3); if those alone keep the count over 15, leave it over and
+say so in the report.
+
+**If the total is still over 40 KB** once every file is at or under its budget, or
+held over it only by exempt facts, stop cutting. Report the final total and which
+files and exempt facts keep it over.
+
+**Log every cut.** Before deleting a fact, append it VERBATIM to
+`~/.local/state/memory-hygiene/cuts/<snapshot-name>.md`, where `<snapshot-name>` is
+the step-2 snapshot dir's name. Put each fact under a `## <source file>` heading
+that names the ORIGINAL memory file it came from, even when it is cut from a file
+built by a merge in this pass. This log is the audit trail and the per-fact undo:
+the operator restores any one fact by copying it back into a live memory file. It
+lives outside the snapshot root, so snapshot pruning never removes it, and it is
+never restored into the memory dir. The full
+snapshot remains the undo for the whole pass.
+
+Do not paraphrase a kept fact into new claims while compressing it. Shorten the
+wording; never change what it asserts.
 
 ### 5. Rebuild the index
 
@@ -224,7 +300,8 @@ short one-line hook. No dangling references to deleted files.
 
 The memory dir is not version-controlled, so there is nothing to commit here: the
 writes are the durable result and the step-2 snapshot is the undo. Verify every
-`MEMORY.md` line points to an existing file and no fact was dropped.
+`MEMORY.md` line points to an existing file, and that no fact was dropped except
+the step 4b cuts the report lists.
 
 **The snapshot does NOT cover everything.** It restores the memory dir only. A
 MIS-ROUTED promotion commits to a vault repo, undone by reverting that commit, not
@@ -233,10 +310,13 @@ it changes nothing outside this dir.)
 
 ### 7. Report
 
-If the operator's job posts a digest, include: before -> after file count; what
-merged; what moved to the vault (with destination file); what was deleted as a
-canon-dup; **every PLUGIN-SCOPED PROPOSAL** (below); any deferred items needing the
-operator's call; and the snapshot path, stated as covering the memory dir only.
+If the operator's job posts a digest, include: before -> after file count and
+total size; what merged; what moved to the vault (with destination file); what was
+deleted as a canon-dup; **what the trim cut**, as each file's before -> after size
+and a few-word gist of each cut fact, plus the full path to the cut log; any budget left
+unmet and what holds it; **every PLUGIN-SCOPED PROPOSAL** (below); any deferred
+items needing the operator's call; and the snapshot path, stated as covering the
+memory dir only.
 OMIT the snapshot line on the step-1 override path (nothing was mutated; step 2 was
 skipped). A scheduled SKIP run reports nothing; on the override path the proposals
 ARE the output and are always reported.

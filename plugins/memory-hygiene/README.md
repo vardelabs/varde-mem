@@ -11,8 +11,9 @@ ends: a write-time reflex and a periodic cleanup.
 - **`skills/consolidate-memory/`**: the periodic cleanup. Merges related
   single-fact files into surface-clusters, promotes mis-routed facts to the
   agent's vault, proposes plugin-scoped facts for a human to land (report only,
-  never writes to a plugin), deletes facts already covered in canon, and rebuilds
-  `MEMORY.md`. A deterministic scanner (`scan.py`) skip-gates the run so a healthy
+  never writes to a plugin), deletes facts already covered in canon, trims every
+  surviving file to a size budget (15 files, 40 KB in total, 6 KB a file), and
+  rebuilds `MEMORY.md`. A deterministic scanner (`scan.py`) skip-gates the run so a healthy
   dir costs no model tokens; `snapshot.sh` takes a pre-pass snapshot so every
   change to the memory dir is revertable. Run it on a scheduled cadence or on
   demand ("consolidate my memory", "memory hygiene pass").

@@ -52,9 +52,31 @@ def main() -> int:
     cases = []
 
     with tempfile.TemporaryDirectory() as td:
-        home = Path(td); md = home / "m"; write_mems(md, 22, "reference")
+        home = Path(td); md = home / "m"; write_mems(md, 18, "reference")
         rc, out = run_scan(home, md)
-        cases.append(("bloat (22 files) -> NEEDS_RUN", rc == 0 and verdict(out) == "NEEDS_RUN"))
+        cases.append(("file-count trip (18 files) -> NEEDS_RUN", rc == 0 and verdict(out) == "NEEDS_RUN"))
+
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 17, "reference")
+        rc, out = run_scan(home, md)
+        cases.append(("just under every trip (17 small files) -> SKIP", rc == 0 and verdict(out) == "SKIP"))
+
+    # One over-grown file trips a run on its own, though the dir is small.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 3, "reference")
+        (md / "big.md").write_text("---\ntype: reference\n---\n" + "x" * 8_000, encoding="utf-8")
+        rc, out = run_scan(home, md)
+        cases.append(("one file >= 8000 B -> NEEDS_RUN, named as oversized",
+                      rc == 0 and verdict(out) == "NEEDS_RUN" and "big.md" in out))
+
+    # Many files each under the per-file trip still trip on total size.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; md.mkdir(parents=True)
+        for i in range(10):
+            (md / f"m{i}.md").write_text("---\ntype: reference\n---\n" + "x" * 6_500, encoding="utf-8")
+        rc, out = run_scan(home, md)
+        cases.append(("total >= 60000 B with no oversized file -> NEEDS_RUN",
+                      rc == 0 and verdict(out) == "NEEDS_RUN" and "oversized: none" in out))
 
     with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 5, "reference")
@@ -132,6 +154,13 @@ def main() -> int:
         rc, out = run_scan(home, md)
         cases.append(("inline-comment type + config -> NEEDS_RUN",
                       rc == 0 and verdict(out) == "NEEDS_RUN"))
+
+    # A file whose size cannot be read (a dangling symlink) must not count as small.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 3, "reference")
+        (md / "gone.md").symlink_to(md / "no-such-target.md")
+        rc, out = run_scan(home, md)
+        cases.append(("unsizable file -> NEEDS_RUN, named", rc == 0 and verdict(out) == "NEEDS_RUN" and "gone.md" in out))
 
     ok = True
     for label, passed in cases:
