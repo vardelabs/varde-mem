@@ -250,8 +250,9 @@ seems to fit. They may only be shortened.
   `--help`, or an issue tracker. A memory holds what those sources do not.
 - **Stale or resolved.** It names a file, flag, version, or PR state that is no
   longer true, or an open question that has since been answered. Check the live
-  source when it is cheap to check. When it is not, and the fact is older than
-  60 days, cut it.
+  source; cut the fact when the check shows it false or resolved. A fact whose
+  check is not cheap stays unless another criterion here applies, because a
+  fact's age cannot be read once a merge has rewritten its file.
 - **A duplicate.** Stated in another memory file, or in a vault or canon file. Keep
   the one copy in its best home. Cut duplicates LAST, after every other cut, and
   only after confirming the copy you keep survives this pass: it sits in a file

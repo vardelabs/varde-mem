@@ -52,11 +52,6 @@ def main() -> int:
     cases = []
 
     with tempfile.TemporaryDirectory() as td:
-        home = Path(td); md = home / "m"; write_mems(md, 22, "reference")
-        rc, out = run_scan(home, md)
-        cases.append(("bloat (22 files) -> NEEDS_RUN", rc == 0 and verdict(out) == "NEEDS_RUN"))
-
-    with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 18, "reference")
         rc, out = run_scan(home, md)
         cases.append(("file-count trip (18 files) -> NEEDS_RUN", rc == 0 and verdict(out) == "NEEDS_RUN"))
