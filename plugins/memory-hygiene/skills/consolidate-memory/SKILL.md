@@ -235,7 +235,12 @@ Read every file that survives steps 3 and 4, merged or not, and cut it down.
 file. These are targets, not trip points: the scanner trips at 18 files, 60 KB, or
 8 KB a file, and the pass trims well below that so the next run stays a SKIP.
 
-**Cut a fact when it is any of these:**
+**Protected facts: compress, never cut.** An operator's correction or stated
+preference that no canon or vault file states, and a PLUGIN-SCOPED memory's
+per-deployment remainder, are exempt from EVERY cut criterion below, even when one
+seems to fit. They may only be shortened.
+
+**Cut any other fact when it is any of these:**
 
 - **A war story.** A dated account of what happened ("On 2026-09-14 I ran X and Y
   broke") whose lesson is stated as a rule. Keep the rule and a one-clause why; cut
@@ -254,18 +259,16 @@ file. These are targets, not trip points: the scanner trips at 18 files, 60 KB, 
 - **Over-explained.** Reduce each fact to the rule, the why, and how to apply it.
   Keep at most one example. Cut restatements, hedges, and history.
 
-**Compress, never cut:** an operator's correction or stated preference that no
-canon or vault file states, and a PLUGIN-SCOPED memory's per-deployment remainder.
-
 **If a file is still over budget** after those cuts, cut its least critical
 facts: the ones a fresh session would lose least by re-learning. The
-compress-never-cut facts above are exempt from this fallback too; if they alone
+protected facts above are exempt from this fallback too; if they alone
 keep a file over budget, leave it over and say so in the report. A file that trims
 to nothing worth keeping is deleted, and its index line goes with it.
 
 **If more than 15 files survive**, merge further by broader surface (for example,
 every git and GitHub file into one), using step 4's merge rules, which drop no
-facts. Then trim the merged file to the per-file budget. A PLUGIN-SCOPED memory
+facts. A file built by an earlier merge is a source like any other: its full
+content goes into the new file before it is deleted. Then trim the merged file to the per-file budget. A PLUGIN-SCOPED memory
 is never merged (step 3); if those alone keep the count over 15, leave it over and
 say so in the report.
 
@@ -276,7 +279,8 @@ files and exempt facts keep it over.
 **Log every cut.** Before deleting a fact, append it VERBATIM to
 `<snapshot_dir>/.memory-hygiene-cuts.md` (the step-2 snapshot dir), under a `## <source file>`
 heading. That file is the audit trail: each cut is listed word for word with its
-source, so the operator can restore any one fact by copying it back. The full
+source, so the operator can restore any one fact by copying it from the log in
+the snapshot dir back into the live memory file. The full
 snapshot remains the undo for the whole pass.
 
 Do not paraphrase a kept fact into new claims while compressing it. Shorten the
@@ -304,7 +308,7 @@ it changes nothing outside this dir.)
 If the operator's job posts a digest, include: before -> after file count and
 total size; what merged; what moved to the vault (with destination file); what was
 deleted as a canon-dup; **what the trim cut**, as each file's before -> after size
-and a few-word gist of each cut fact, plus the path to `.memory-hygiene-cuts.md`; any budget left
+and a few-word gist of each cut fact, plus the full path to the cut log inside the snapshot dir; any budget left
 unmet and what holds it; **every PLUGIN-SCOPED PROPOSAL** (below); any deferred
 items needing the operator's call; and the snapshot path, stated as covering the
 memory dir only.
