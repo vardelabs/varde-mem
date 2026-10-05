@@ -158,11 +158,14 @@ def main() -> int:
     clusters: dict[str, list[str]] = {}
     misrouted: list[dict] = []
     sizes: dict[str, int] = {}
+    unsized: list[str] = []
     for p in files:
         try:
             sizes[p.name] = p.stat().st_size
         except OSError:
+            # Unknown size must not read as small: it could hide an oversized file.
             sizes[p.name] = 0
+            unsized.append(p.name)
         try:
             text = p.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -186,6 +189,8 @@ def main() -> int:
         reasons.append(f"total size {total_bytes} B >= {BYTES_TRIP} B")
     if oversized:
         reasons.append(f"{len(oversized)} file(s) >= {FILE_BYTES_TRIP} B")
+    if unsized:
+        reasons.append(f"{len(unsized)} file(s) of unknown size: {', '.join(unsized)}")
     if len(misrouted) >= MISROUTE_TRIP:
         reasons.append(f"{len(misrouted)} mis-routed file(s) (type in {sorted(vault_types)})")
 

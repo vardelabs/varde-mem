@@ -160,6 +160,13 @@ def main() -> int:
         cases.append(("inline-comment type + config -> NEEDS_RUN",
                       rc == 0 and verdict(out) == "NEEDS_RUN"))
 
+    # A file whose size cannot be read (a dangling symlink) must not count as small.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td); md = home / "m"; write_mems(md, 3, "reference")
+        (md / "gone.md").symlink_to(md / "no-such-target.md")
+        rc, out = run_scan(home, md)
+        cases.append(("unsizable file -> NEEDS_RUN, named", rc == 0 and verdict(out) == "NEEDS_RUN" and "gone.md" in out))
+
     ok = True
     for label, passed in cases:
         print(f"  [{'PASS' if passed else 'FAIL'}] {label}")
