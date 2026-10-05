@@ -246,7 +246,10 @@ file. These are targets, not trip points: the scanner trips at 18 files, 60 KB, 
   source when it is cheap to check. When it is not, and the fact is older than
   60 days, cut it.
 - **A duplicate.** Stated in another memory file, or in a vault or canon file. Keep
-  the one copy in its best home.
+  the one copy in its best home. Cut duplicates LAST, after every other cut, and
+  only after confirming the copy you keep survives this pass: it sits in a file
+  that is not being deleted, and it was not itself cut. If you cannot confirm
+  that, keep both.
 - **Over-explained.** Reduce each fact to the rule, the why, and how to apply it.
   Keep at most one example. Cut restatements, hedges, and history.
 
@@ -254,8 +257,16 @@ file. These are targets, not trip points: the scanner trips at 18 files, 60 KB, 
 canon or vault file states, and a PLUGIN-SCOPED memory's per-deployment remainder.
 
 **If a file is still over budget** after those cuts, cut its least critical
-facts: the ones a fresh session would lose least by re-learning. A file that trims
+facts: the ones a fresh session would lose least by re-learning. The
+compress-never-cut facts above are exempt from this fallback too; if they alone
+keep a file over budget, leave it over and say so in the report. A file that trims
 to nothing worth keeping is deleted, and its index line goes with it.
+
+**If more than 15 files survive**, merge further by broader surface (for example,
+every git and GitHub file into one), using step 4's merge rules, which drop no
+facts. Then trim the merged file to the per-file budget. A PLUGIN-SCOPED memory
+is never merged (step 3); if those alone keep the count over 15, leave it over and
+say so in the report.
 
 Do not paraphrase a kept fact into new claims while compressing it. Shorten the
 wording; never change what it asserts.
