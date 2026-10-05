@@ -19,6 +19,8 @@ dir (`~/.claude/projects/<cwd-as-slug>/memory`). A scheduled job should pass
 
 Trip conditions for NEEDS_RUN (any one):
   - total memory files >= FILE_COUNT_TRIP        (index bloat)
+  - total bytes of memory files >= BYTES_TRIP    (recall bloat)
+  - any one file >= FILE_BYTES_TRIP              (an over-grown file)
   - mis-routed files (frontmatter type in the config's trip set) >= MISROUTE_TRIP
 
 Misroute detection is opt-in, like the hook: with no usable routing config the
@@ -42,7 +44,9 @@ STATE_FILE = Path.home() / ".local/state/memory-consolidation-scan.json"
 CONFIG_FILE = Path.home() / ".config/memory-hygiene/memory-routing.json"
 LEGACY_CONFIG_FILE = Path.home() / ".config/harness-management/memory-routing.json"
 
-FILE_COUNT_TRIP = 22   # index bloat threshold (lean target is ~15-17)
+FILE_COUNT_TRIP = 18   # index bloat threshold (lean target is <= 15 files)
+BYTES_TRIP = 60_000    # whole-dir size threshold (lean target is <= 40 KB)
+FILE_BYTES_TRIP = 8_000  # single-file threshold (lean target is <= 6 KB a file)
 CLUSTER_MIN = 3        # same-topic files reported as a notable merge hint
 MISROUTE_TRIP = 2      # mis-routed files that warrant a routing pass
 
@@ -153,7 +157,12 @@ def main() -> int:
 
     clusters: dict[str, list[str]] = {}
     misrouted: list[dict] = []
+    sizes: dict[str, int] = {}
     for p in files:
+        try:
+            sizes[p.name] = p.stat().st_size
+        except OSError:
+            sizes[p.name] = 0
         try:
             text = p.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
@@ -163,6 +172,8 @@ def main() -> int:
         if ftype in vault_types:
             misrouted.append({"file": p.name, "type": ftype})
 
+    total_bytes = sum(sizes.values())
+    oversized = sorted((n for n, b in sizes.items() if b >= FILE_BYTES_TRIP), key=lambda n: -sizes[n])
     merge_candidates = {k: v for k, v in clusters.items() if len(v) >= 2}
     notable_clusters = {k: v for k, v in merge_candidates.items() if len(v) >= CLUSTER_MIN}
 
@@ -171,6 +182,10 @@ def main() -> int:
     reasons = []
     if len(files) >= FILE_COUNT_TRIP:
         reasons.append(f"file count {len(files)} >= {FILE_COUNT_TRIP}")
+    if total_bytes >= BYTES_TRIP:
+        reasons.append(f"total size {total_bytes} B >= {BYTES_TRIP} B")
+    if oversized:
+        reasons.append(f"{len(oversized)} file(s) >= {FILE_BYTES_TRIP} B")
     if len(misrouted) >= MISROUTE_TRIP:
         reasons.append(f"{len(misrouted)} mis-routed file(s) (type in {sorted(vault_types)})")
 
@@ -180,6 +195,8 @@ def main() -> int:
         "scanned_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "dir": str(mem_dir),
         "file_count": len(files),
+        "total_bytes": total_bytes,
+        "oversized": [{"file": n, "bytes": sizes[n]} for n in oversized],
         "verdict": verdict,
         "reasons": reasons,
         "vault_types": sorted(vault_types),
@@ -188,6 +205,8 @@ def main() -> int:
         "misrouted": misrouted,
         "thresholds": {
             "file_count_trip": FILE_COUNT_TRIP,
+            "bytes_trip": BYTES_TRIP,
+            "file_bytes_trip": FILE_BYTES_TRIP,
             "cluster_min": CLUSTER_MIN,
             "misroute_trip": MISROUTE_TRIP,
         },
@@ -199,7 +218,13 @@ def main() -> int:
         print(f"scan: warning, could not write state file: {e}")
 
     print(f"memory dir: {mem_dir}")
-    print(f"files: {len(files)} (lean target ~15-17, trip at {FILE_COUNT_TRIP})")
+    print(f"files: {len(files)} (lean target <= 15, trip at {FILE_COUNT_TRIP})")
+    print(f"size: {total_bytes} B (lean target <= 40000, trip at {BYTES_TRIP})")
+    if oversized:
+        print(f"oversized (>= {FILE_BYTES_TRIP} B, trim each to <= 6000): "
+              + ", ".join(f"{n} ({sizes[n]} B)" for n in oversized))
+    else:
+        print("oversized: none")
     if merge_candidates:
         print("merge hints (same first-token, >=2 files; informational, not a trigger):")
         for k in sorted(merge_candidates):
