@@ -230,9 +230,11 @@ trim in step 4b is where facts are cut.
 
 Read every file that survives steps 3 and 4, merged or not, and cut it down.
 
-**Budget:** at most 15 files, at most 40 KB in total, and at most 6 KB in any one
-file. These are targets, not trip points: the scanner trips at 18 files, 60 KB, or
-8 KB a file, and the pass trims well below that so the next run stays a SKIP.
+**Budget:** at most 15 files, at most 40,000 bytes in total, and at most 6,000
+bytes in any one file (the scanner counts raw bytes, and KB here means 1,000
+bytes). These are targets, not trip points: the scanner trips at 18 files,
+60,000 bytes, or 8,000 bytes a file, and the pass trims well below that so the
+next run stays a SKIP.
 
 **Protected facts: compress, never cut.** An operator's correction or stated
 preference that no canon or vault file states, and a PLUGIN-SCOPED memory's
