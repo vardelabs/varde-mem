@@ -121,7 +121,7 @@ bash "$SKILL_DIR/snapshot.sh" "$MEMDIR"
 
 Copies the dir to `~/.local/state/memory-snapshots/<timestamp>/` and prunes to
 the last 10. Restore with
-`rsync -a --delete --exclude=.memory-hygiene-snapshot --exclude=CUTS.md <snapshot_dir>/ ~/.claude/projects/<slug>/memory/`
+`rsync -a --delete --exclude=.memory-hygiene-snapshot --exclude=.memory-hygiene-cuts.md <snapshot_dir>/ ~/.claude/projects/<slug>/memory/`
 (the excludes keep snapshot.sh's ownership marker and step 4b's cut log out of the
 restored dir).
 
@@ -274,7 +274,7 @@ held over it only by exempt facts, stop cutting. Report the final total and whic
 files and exempt facts keep it over.
 
 **Log every cut.** Before deleting a fact, append it VERBATIM to
-`<snapshot_dir>/CUTS.md` (the step-2 snapshot dir), under a `## <source file>`
+`<snapshot_dir>/.memory-hygiene-cuts.md` (the step-2 snapshot dir), under a `## <source file>`
 heading. That file is the audit trail: each cut is listed word for word with its
 source, so the operator can restore any one fact by copying it back. The full
 snapshot remains the undo for the whole pass.
@@ -304,7 +304,7 @@ it changes nothing outside this dir.)
 If the operator's job posts a digest, include: before -> after file count and
 total size; what merged; what moved to the vault (with destination file); what was
 deleted as a canon-dup; **what the trim cut**, as each file's before -> after size
-and a few-word gist of each cut fact, plus the path to `CUTS.md`; any budget left
+and a few-word gist of each cut fact, plus the path to `.memory-hygiene-cuts.md`; any budget left
 unmet and what holds it; **every PLUGIN-SCOPED PROPOSAL** (below); any deferred
 items needing the operator's call; and the snapshot path, stated as covering the
 memory dir only.
