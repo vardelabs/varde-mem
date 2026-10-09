@@ -52,7 +52,7 @@ installed, securely-resolved module both hooks import from a fixed trusted path.
 
 Denies a write that **adds** an untagged entry to a Daily Note (a bold
 lead-in at column 0 followed by prose, e.g. `[decision] **Retired the charter
-model.** Kai's call.`). It diffs the before- and after-documents rather than
+model.** Sam's call.`). It diffs the before- and after-documents rather than
 the raw tool input, so overwriting or appending to a note full of legacy
 untagged entries is never blocked; only an entry the write genuinely adds or
 edits is gated. Moved and renamed from the monolith's
@@ -76,8 +76,8 @@ budgets are unchanged from the reviewed hook. Disable via `$JOURNAL_DISABLED`
 
 ## `remind-journal-owed.py` (UserPromptSubmit + PreCompact)
 
-The PULSE Journal reminder for a session that has no PULSE loop, such as a
-local Mac session. It never blocks. When `vardemem owed` says this session's
+The Journal reminder for a session that has no scheduled tick, such as a
+local interactive session. It never blocks. When `vardemem owed` says this session's
 work has earned a Journal line, UserPromptSubmit adds one line to the next
 turn, at most once an hour. PreCompact ignores that cooldown and puts the same
 reminder into the compaction instructions, so the summary carries it.
@@ -86,9 +86,9 @@ The session scope is the hook's: `--since` is the later of the session's
 first prompt and its last reminder, `--repo` is the session cwd (when it is
 in a git repo) plus `$AGENT_VAULT`, and `--surface` plus `--journal-surface` are
 `$WRITER_SURFACE` when set. The decision itself is `vardemem owed`, the same
-check the PULSE reminder calls, so the two cannot drift. State is one small
+check the scheduled reminder calls, so the two cannot drift. State is one small
 file per session under `~/.local/state/journal/`. On by default once the
-plugin is enabled. A host whose lanes already get a PULSE reminder names
+plugin is enabled. A host whose scheduled tick already reminds names
 `remind-journal-owed` in `$JOURNAL_DISABLED`. Tests:
 `tests/smoke-remind-journal-owed.py`.
 

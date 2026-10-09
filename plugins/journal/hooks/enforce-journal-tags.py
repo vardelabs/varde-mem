@@ -5,7 +5,7 @@ A PreToolUse hook (wired in hooks.json on Edit|Write|MultiEdit) that DENIES a wr
 which ADDS an untagged entry to a Daily Note, so the agent re-issues it tagged in the
 same turn. An entry is a bold lead-in at column 0 followed by prose:
 
-    [decision] **Retired the charter model.** Kai's call; issues are the hub now.
+    [decision] **Retired the charter model.** Sam's call; issues are the hub now.
     [fix] **Corrected the stale PreCompact target.** It pointed at a dead script.
     [architecture] **Folded handoff-protocol into harness-management.** One domain.
     [ops] **Ran the weekly board reconcile.** No surprises.
@@ -14,7 +14,7 @@ Why a HARD BLOCK and not an advisory: daily-note tagging is a habit, not a
 judgment, and it demonstrably does not form on its own: over the month preceding
 this hook (2026-06-14
 to 2026-07-12), 20 consecutive Daily Notes carried ZERO tags despite the convention
-being proposed ten weeks earlier (corvus-vault#24). An advisory ignored 100% of the
+being proposed ten weeks earlier. An advisory ignored 100% of the
 time is a no-op with overhead. The block is what makes the tag exist; the AGENT still
 supplies the judgment of WHICH tag, because that cannot be inferred from a diff.
 
@@ -53,7 +53,7 @@ Two deliberate choices in that sentence, both bought with bugs:
     change without the line changing:
 
         Session notes                     ->   ## Session notes      (the edit)
-        **Owner.** Kai will coordinate.        **Owner.** Kai will coordinate.
+        **Owner.** Sam will coordinate.        **Owner.** Sam will coordinate.
 
     The `**Owner.**` line is byte-identical and untouched, but the new heading makes it
     start a block, so it becomes an entry. Keying on entries would deny it; keying on the
@@ -509,7 +509,7 @@ def added_untagged(before: str, after: str, tags) -> list:
     # without the line itself changing:
     #
     #     Session notes                     ->   ## Session notes      (the edit)
-    #     **Owner.** Kai will coordinate.        **Owner.** Kai will coordinate.
+    #     **Owner.** Sam will coordinate.        **Owner.** Sam will coordinate.
     #
     # The `**Owner.**` line is byte-identical, and untouched, but the new heading makes it
     # start a block, so it becomes an entry and would be denied. Same class when closing a
@@ -675,7 +675,7 @@ def main() -> int:
     # The example MUST use a configured tag. Hardcoding `[decision]` told a tenant whose
     # tags are ["call", "chore"] to use a tag the hook would reject, so following the
     # deny message got them denied again.
-    example = f"[{tags[0]}] **Retired the charter model.** Kai's call."
+    example = f"[{tags[0]}] **Retired the charter model.** Sam's call."
     meanings = {
         "decision": "a call was made",
         "fix": "something broken was corrected",

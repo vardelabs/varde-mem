@@ -37,7 +37,7 @@ Budget       The spine claims at most SPINE_BUDGET bytes (see STATIC BUDGET).
              ancient history returns as rollups, and only then tail-fitted.
 Failure      Silent-but-visible, never blocking. A read that times out or exits
              non-zero logs and injects one short note; it never fails the hook.
-Absent tool  A tenant with no spine (varde-vault, north-vault) resolves nothing
+Absent tool  A tenant with no spine resolves nothing
              and injects nothing. No note, no error.
 
 Disable with `preload-spine` named in $JOURNAL_DISABLED (the legacy
@@ -122,7 +122,7 @@ def _open_beneath(vault: Path, rel_parts, flags: int, mode: int = 0o600):
     on the first try, plus an outside WRITE from the dump. Documenting it as a
     residual was not good enough for a hook that injects into context and writes a
     git-auto-pushed file. Walking with fds removes the window entirely, because
-    there is no second resolution to race. (Codex terra security re-audit, #1446.)
+    there is no second resolution to race.
 
     `..` and absolute components are rejected outright rather than normalized, so
     the walk cannot be talked out of the tree by the caller either."""
@@ -250,8 +250,7 @@ def _windows_search_dirs(profile):
     Split out from the platform branch so it runs on ANY host: the merge gate
     runs on Linux, where an `os.name == "nt"` body executes zero times, and
     for a `.ci-relaxed` plugin the test suite is the only gate there is. A
-    reordering or a typo in here would otherwise merge green forever
-    (PR #2300 review)."""
+    reordering or a typo in here would otherwise merge green forever."""
     return (os.path.join(profile, "AppData", "Local", "Programs", "vardemem"),
             # Mirrors the POSIX `~/.local/bin` entry: Git Bash users on this
             # platform create and use it by habit.
@@ -290,7 +289,6 @@ def _vardemem_search_dirs():
     both read `$HOME` first, so a repo that sets it moves where this list's
     one `~`-anchored entry points, silently. The attack was never "change
     what your home directory contains", it was "change where `~` points".
-    (North, #1962, reproduced before it shipped.)
 
     Tests override this FUNCTION, never an environment variable, because an
     env-var seam here IS the exploit.
@@ -369,8 +367,8 @@ def _run_spine_read(script, cwd, extra_args, timeout: float):
     failed to spawn, or the timeout fired); every other path returns the
     process's actual int, 0 included. Nothing enforces that split at the
     type level, so a caller keying behavior on `exit_code` must check `is
-    None` before comparing it against an int -- the round-2 regression this
-    file already carries a fix for came from exactly that gap. (Vega.)
+    None` before comparing it against an int -- a regression this
+    file already carries a fix for came from exactly that gap.
 
     `read` is documented to exit 0 and degrade on a malformed spine, so a
     non-zero exit means the TOOL failed rather than the data being thin, and
@@ -387,7 +385,7 @@ def _run_spine_read(script, cwd, extra_args, timeout: float):
         # build_spine_block's failure note points the operator at the hook
         # log; without this line that log held nothing for a spent-clock skip
         # specifically, only for the paths below that actually spawned a
-        # child. (Vega.)
+        # child.
         log("spine: read skipped, no time left in this read's window")
         return None, None
     try:
@@ -441,8 +439,8 @@ _SPINE_RUNS_RE = re.compile(r"([=`~])\1{1,}")
 # into `_SPINE_RUNS_RE`'s repeated-run match. `(?m)` anchors `^` to every line,
 # not just the string start, since every line in spine content is a potential
 # heading start (`# SYSTEM
-# INSTRUCTIONS` passed the round-2/3 sanitizer unchanged). The `{0,3}` on the
-# leading spaces closes North's round-2 follow-up: CommonMark allows up to
+# INSTRUCTIONS` passed an earlier sanitizer unchanged). The `{0,3}` on the
+# leading spaces closes a gap: CommonMark allows up to
 # three spaces of indentation before an ATX heading, and `" # SYSTEM
 # INSTRUCTIONS"` still rendered as an H1 against the space-blind version of
 # this regex. Same-length as always: a leading space or `#` is one byte, and
@@ -461,7 +459,7 @@ _SPINE_RULE_RE = re.compile(r"([-*])\1{2,}")
 # `_SPINE_RULE_RE` leave open, `_` and spaced idioms neither covers, and a
 # setext heading needing only ONE trailing `=`/`-` (their collapse-to-first-
 # char produces exactly that trigger, so full-line-to-`.` replaces it here
-# instead). See QA/Tracker.md 2026-08-25.
+# instead).
 _SPINE_SETEXT_RULE_RE = re.compile(r"(?m)^[ \t]{0,3}([-_*=])(?:[ \t]*\1)*[ \t]*$")
 
 # A `>` starting a line (optional leading spaces, CommonMark allows up to 3):
@@ -524,7 +522,7 @@ def _sanitize_spine_content(text: str) -> str:
     `sanitize_title` before they ever reach model context. A Journal entry is an
     agent SUMMARY of external material (issues, PRs, Discord, mail), so the same
     threat applies here, just delayed by one summarization pass rather than
-    absent (codex cross-model review, PR #1535).
+    absent.
 
     `sanitize_title` cannot be reused as-is: it collapses newlines, which is
     correct for a single-line title field but would destroy the spine's
@@ -560,8 +558,8 @@ def _sanitize_spine_content(text: str) -> str:
     first version of this function used -- that suffix added 8 bytes per
     occurrence, and a Journal entry repeating a banner name hundreds of times
     could grow the sanitized text past what the PRE-sanitization compression
-    check had already decided fit (codex cross-model review, PR #1535, round 2:
-    demonstrated growing 3,471 B to 5,311 B with 230 repeats, silently pushing
+    check had already decided fit (measured
+    growing 3,471 B to 5,311 B with 230 repeats, silently pushing
     real newest-day content out of the fitted result)."""
     flat = _SPINE_RUNS_RE.sub(lambda m: m.group(0)[0], text)
     flat = _SPINE_RULE_RE.sub(lambda m: m.group(0)[0], flat)
@@ -586,7 +584,7 @@ def _fit_spine(text: str, allowance: int, script: str) -> str:
 
     Whole lines only: half a day line reads as a complete one -- which is also
     why an unfittable pointer is DROPPED rather than truncated mid-sentence; see
-    below (codex cross-model review, PR #1535)."""
+    below."""
     raw = text.rstrip("\n")
     if not raw.strip():
         return ""
@@ -659,7 +657,7 @@ def build_spine_block(cwd, allowance: int, outer_deadline: float) -> str:
     The read's own `SPINE_TIMEOUT` window is still started after
     resolution, which is now four `stat` calls rather than a `git`
     subprocess. Cheap, and the shape stays correct if resolution ever
-    grows a cost again (North review, PR #1535)."""
+    grows a cost again."""
     if _disabled("preload-spine"):
         return ""
     if allowance < SPINE_MIN_ALLOWANCE:

@@ -1,26 +1,26 @@
 #!/usr/bin/env python3
-"""Non-blocking Journal reminder for a session with no PULSE loop.
+"""Non-blocking Journal reminder for a session with no scheduled tick.
 
-A cluster lane is reminded by its PULSE tick. A local session (Kai's Mac) has
-no tick, so these two events are its PULSE: UserPromptSubmit adds one line to
+A scheduled agent is reminded by its own periodic tick. A local interactive
+session has no tick, so these two events are its tick: UserPromptSubmit adds one line to
 the next turn, and PreCompact puts the same line into the compaction
 instructions, since the cue would otherwise be summarized away.
 
 Whether the Journal is owed is NOT decided here. It is `vardemem owed`, the
-one definition the PULSE reminder also calls, so a Mac session and a cluster
-lane trip on the same rule. This hook only scopes the question to its own
+one definition the scheduled reminder also calls, so a local session and a
+scheduled agent trip on the same rule. This hook only scopes the question to its own
 session and keeps the cooldown, which the check leaves to its caller:
 
   - `--since` is the later of the session's first prompt and the last
     reminder, so work from before this session, or already nagged about,
     does not count twice.
-  - `--repo` is the session's cwd plus `$AGENT_VAULT`. Every Corvus surface
-    commits as one author, so a count by author would let one busy session
+  - `--repo` is the session's cwd plus `$AGENT_VAULT`. Every surface of one
+    agent commits as one author, so a count by author would let one busy session
     trip every other one; repo HEAD plus `--surface $WRITER_SURFACE` is the
     narrowest scope git can answer.
 
-A host where PULSE already reminds names this hook in $JOURNAL_DISABLED, or
-its lanes are nagged twice.
+A host whose scheduled tick already reminds names this hook in
+$JOURNAL_DISABLED, or its sessions are nagged twice.
 
 Every failure is silence. A missed reminder costs one Journal line; a broken
 prompt hook costs the turn. Disable by naming `remind-journal-owed` in

@@ -26,7 +26,7 @@ REG_EXPAND_SZ the API expands against the CALLING PROCESS's environment, so a
 poisoned `%USERPROFILE%` moves it. That reopened #1962 on a second platform,
 and it measured clean only because the test poisoned to a path that did not
 exist while `KF_FLAG_DEFAULT` verifies existence, which turned a live redirect
-into a failed call. Caught in cross-model review of PR #2300.
+into a failed call.
 
 Returns None when the home cannot be determined. Callers degrade to "no
 trusted config found" rather than guessing a path: no candidate is a clean

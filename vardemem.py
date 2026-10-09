@@ -131,7 +131,7 @@ def _trust_file_path():
     a relative name would have every repo carrying a same-named file that
     lists itself trust itself. Every entry INSIDE the file already has to
     be absolute for this reason (see `_trusted_journal_roots`); the pointer
-    to the file gets the same rule. (North, round 8.)"""
+    to the file gets the same rule."""
     override = os.environ.get(TRUST_FILE_ENV, "").strip()
     if override and os.path.isabs(override):
         return Path(override)
@@ -205,8 +205,7 @@ def _root_trusted(d, roots):
 # Resolve the root by walking up from the CURRENT DIRECTORY first, and consult
 # $AGENT_VAULT only after. The other order looked equivalent and was not:
 # $AGENT_VAULT pointing at the primary checkout wrote a day line into the
-# WRONG tree from a worktree session, silently and at exit 0. (North,
-# 2026-07-28.) In the vault this file used to live in, the local witness was
+# WRONG tree from a worktree session, silently and at exit 0. In the vault this file used to live in, the local witness was
 # __file__, because the script sat beside the journal it wrote. Extraction
 # takes __file__ out of that tree entirely, so it witnesses nothing; the
 # config file takes over, and it is a STRICTLY better witness because it is
@@ -240,7 +239,7 @@ def _resolve_root():
         here = None
     except OSError as e:
         # Reachable when cwd itself is unsearchable, at least on macOS: found
-        # while confirming North's round-3 door 2, where this raised before
+        # while testing the unsearchable-walk case, where this raised before
         # the walk loop below ever started. getcwd() is more forgiving on
         # Linux (it can answer from the kernel's already-open reference
         # without a fresh permission check), so there the walk loop's own
@@ -261,7 +260,6 @@ def _resolve_root():
                 # answering EXIT_NO_JOURNAL here would tell a caller keying its
                 # silence on that code that no journal is configured, when one
                 # may well be, just behind a directory we could not read.
-                # (North, round 3.)
                 die("Could not check %s for a journal config: %s"
                     % (cfg, unreachable))
             # An untrusted d with a REAL config is treated the same as one
@@ -272,7 +270,7 @@ def _resolve_root():
             # auto-discovered. The closest one is remembered (not silently
             # dropped) so the final refusal, if the walk and the env both
             # come up empty, can say what actually happened instead of
-            # claiming nothing was ever found. (North, round 8.)
+            # claiming nothing was ever found.
             if is_file:
                 if _root_trusted(d, trusted):
                     return d, cfg
@@ -286,7 +284,7 @@ def _resolve_root():
         # the same answer as one that was never written, and folding it into
         # EXIT_NO_JOURNAL would tell a caller keying its silence on that code
         # that $AGENT_VAULT has no journal configured, when it has one that
-        # is misconfigured. (Vega.)
+        # is misconfigured.
         _, unreachable = _stat_state(cfg, _stat.S_ISREG)
         if unreachable is not None:
             die("Could not check %s for a journal config: %s" % (cfg, unreachable))
@@ -310,7 +308,7 @@ def _resolve_root():
         # not there") does not cover it either -- named honestly, still
         # quiet, since a planted config in a tree the operator never
         # trusted to be a journal root is exactly the case EXIT_NO_JOURNAL
-        # exists to let a caller stay silent over. (North, round 8.)
+        # exists to let a caller stay silent over.
         trust_path = _trust_file_path()
         remedy = (("Add it to %s to read it here." % trust_path)
                   if trust_path is not None else
@@ -376,16 +374,15 @@ def _warn_wrong_tree(root, rel):
         # itself when it is a symlink into an unreadable tree. Swallowing it
         # here is safe because the caller that CAN refuse checks the same
         # path again right after (_run's _dir_state guard); this is only
-        # reachable in the same shape North's #2 round-2 finding was, and my
-        # own new symlink check crashed here on 3.9-3.12 before that guard
-        # ever ran. (North, in effect.)
+        # reachable in the same shape as the unsearchable-cwd case, and a
+        # symlink check here crashed on 3.9-3.12 before that guard ever ran.
         if _dir_state(d / rel)[0]:
             # Compare the JOURNALS, resolved, not the trees. Two trees that
             # symlink one shared journal are not a wrong-tree case, and a
             # symlink is the supported way to put a journal outside its root,
             # so name-equality warned at exactly the deployment the containment
             # rule pushes people toward. This is the discrimination test, not
-            # the containment test the thread rejected resolve() for. (North.)
+            # the containment test the thread rejected resolve() for.
             if (d / rel).resolve() != (root / rel).resolve():
                 # The RESOLVED journal, not the root: a symlinked journal puts
                 # the write somewhere neither path names, and this warning
@@ -397,7 +394,7 @@ def _warn_wrong_tree(root, rel):
                 # be looking at a `d` that has one too. The gate breaks
                 # that: a `d` on this walk can now hold a real config and
                 # still have lost the walk, for being untrusted rather than
-                # absent. Checked here, not assumed. (North, round 8.)
+                # absent. Checked here, not assumed.
                 has_cfg, _ = _stat_state(d / CONFIG_NAME, _stat.S_ISREG)
                 if has_cfg:
                     print("!! Writing the journal at %s,\n!! but the current "
@@ -454,7 +451,7 @@ def _paths():
     `selftest` is pure index arithmetic and reads no journal file, but the
     root was resolved at import, so a copy placed anywhere else exited 1 with
     "Cannot locate the vault" and the PR's "verification is re-runnable" claim
-    was false off the vault path. Round 12 answered that with a path-DEPTH
+    was false off the vault path. An earlier fix answered that with a path-DEPTH
     heuristic (`_SELFTEST and len(parents) > 3`), which fails for the one
     directory a reviewer actually copies to: a script at `/tmp` has 2 parents
     on Linux and 3 on macOS, so both fell through and died -- the exact
@@ -462,8 +459,7 @@ def _paths():
     is the wrong shape of answer. Nothing needs the journal until something
     touches a journal file, so resolve it there: exact from any path, and the
     heuristic is deleted rather than retuned. Accessors rather than constants
-    so that every site which needs the journal says so. (North, rounds 12 and
-    13.)"""
+    so that every site which needs the journal says so."""
     if not _PATHS:
         root, conf = _resolve_root()
         cfg = _read_config(conf)
@@ -525,7 +521,7 @@ DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # short leading clause ("Travel week, agent autonomous."). The clause used to
 # be hardcoded to one phrase, so "Holiday. No session logged." never
 # collapsed; it is generic now, and the collapse carries the clause into the
-# output rather than discarding it. (North, round 10.)
+# output rather than discarding it.
 EMPTY = re.compile(r"^(?P<why>[^.]{0,60}\.\s*)?no (session logged|working session)\.?$", re.I)
 
 # Every command this tool prints has to RUN as printed, and a bare `vardemem`
@@ -541,7 +537,7 @@ def real_date(s):
     missing and forget, refused the file it had just written. Nothing in the
     tool removes a day line, so the only way out was hand-editing SPINE.md,
     which this file's own spine header forbids: one typo ended the spine. The
-    two checks have to be the same check. (North, round 8.)"""
+    two checks have to be the same check."""
     if not DATE.fullmatch(s):
         return False
     try:
@@ -559,8 +555,7 @@ def floor_budget(T):
 
     A budget below this is not achievable by any alpha, so `cover` returns more
     lines than asked and no rollup can fix it. Naming it lets the read say so
-    instead of pointing at `due`. (North, round 7; corrected round 9 when
-    pinning the present raised the floor.)"""
+    instead of pointing at `due`. The floor counts the pinned present."""
     return 1 if T <= 1 else bin(T - 1).count("1") + 1
 
 
@@ -595,7 +590,7 @@ def _cover(T, alpha):
         # The right-edge test is `hi < T`, and relaxing it to `hi <= T` breaks
         # the spine. A block whose end lands on the newest day must halve all
         # the way to size 1, so the present is always its own single-day block.
-        # Round 8 taught needed() and all_pending() to stop asking for a rollup
+        # needed() and all_pending() therefore do not ask for a rollup
         # that reaches the newest day, because writing one makes the next
         # day-close `put` on that day hit the rewrite refusal. cover still EMITTED
         # such a block at low budgets. read then expanded it to one line per
@@ -603,13 +598,12 @@ def _cover(T, alpha):
         # user at a `due` that was right to report nothing to do. Half of all
         # history vanished with no remedy. The invariant lives here, in the one
         # place blocks are made, instead of in every consumer that reads them.
-        # (North, round 9.)
         # `size == 1` is what makes this loop TERMINATE, not merely what shapes
         # the output. At size 1, `mid = (lo + hi) // 2` equals `lo`, so the
         # else branch would push (lo, lo) and (lo, lo + 1) and the second comes
         # back forever. The failure is not a crash or a wrong answer: it is
         # unbounded allocation at roughly 0.36 GB per second, which on a shared
-        # box takes down more than the caller. North's review handler was OOM
+        # box takes down more than the caller. A review process was OOM
         # killed by exactly this mutation. Weaken this test and you get that,
         # so it is a guard rather than a formatting choice.
         if size == 1 or (hi < T and size <= alpha * (T - lo)):
@@ -698,7 +692,7 @@ CONFLICT = ("<<<<<<<", "=======", ">>>>>>>", "|||||||")
 # A rollup's stored fields. Named, not positional: the text used to be
 # `rollups[k][1]`, and when the tuple last grew, ten call sites were updated
 # and an eleventh printed a Python repr for a round. `.text` cannot be reached
-# by accident. (North, round 12; shape hardened round 13.)
+# by accident.
 Roll = collections.namedtuple("Roll", "count digest text")
 
 # A collapsed run of contentless days, held as data while the read is being
@@ -716,9 +710,8 @@ def day_digest(day_keys):
     count` stays true, and the rollup asserts a summary of days it never saw,
     at exit 0, in the read that lands in every session. Measured: 464 such
     states across N=4..25. A count is too weak a fingerprint for the claim
-    being made; a digest is the right width. (Codex, cross-model review, on a
-    property the round-11 count field was introduced to guarantee.)"""
-    # 16 hex, not 8. At 32 bits a collision is constructible: Codex built one
+    being made; a digest is the right width."""
+    # 16 hex, not 8. At 32 bits a collision is constructible: review built one
     # (two different 4-day sets both digesting to 841cb002) and the read then
     # printed a summary of the wrong days at exit 0 with no warning. 64 bits
     # puts an accidental collision past any history this file will ever hold,
@@ -737,8 +730,7 @@ class RollProblem:
     printed commands failed, which is exactly what the contract at the top of
     this file says cannot happen. A remedy is only correct next to the cause,
     so it is chosen HERE and never at a print site. `stored` is the fact that
-    decides it: whether the key made it into the dict `save()` rewrites from.
-    (North, round 13.)"""
+    decides it: whether the key made it into the dict `save()` rewrites from."""
     __slots__ = ("msg", "key", "stored", "stale")
 
     def __init__(self, msg, key=None, stored=False, stale=False):
@@ -759,7 +751,7 @@ def parse():
 
     `problems` is DAY-level and fatal to writes; `roll_bad` is rollup-level,
     a cache, and clearable. They are returned apart, and must stay apart:
-    every consumer that merged them printed a falsehood. (North, round 13.)
+    every consumer that merged them printed a falsehood.
 
     A git conflict in this file used to parse SILENTLY, because the marker
     lines carry no `|` and `>>>>>>>` looks like a blockquote. git writes the
@@ -781,7 +773,7 @@ def parse():
         # the spine's OWN journal-root config breaking, one level removed
         # from the journal-directory case _stat_state already refuses on.
         # Reading it as "no spine yet" degrades every command silently
-        # rather than naming the break. (Vega.)
+        # rather than naming the break.
         if os.path.islink(sp) or _broken_ancestor(sp):
             die("Could not read the spine at %s: %s%s"
                 % (sp, e,
@@ -810,7 +802,7 @@ def parse():
             # Silently skipping this shrank the day set and shifted every index
             # above it, surfacing much later as `put` refusing for the wrong
             # stated reason. A hand-resolved conflict is exactly where a pipe
-            # goes missing. (North, 2026-07-28.)
+            # goes missing.
             #
             # Route by SECTION. This branch fires before the section dispatch
             # below, so it sent a broken line in the Rollups section to the
@@ -818,7 +810,7 @@ def parse():
             # the `forget --orphaned` that would clear it. Third instance of
             # that same misrouting; the fix is to ask which section we are in
             # everywhere a problem is raised, not to patch each branch as it
-            # is found. (Codex, cross-model review, round 2.)
+            # is found.
             if section == "days":
                 problems.append("line %d: no '|' separator, line dropped: %.40s"
                                 % (n, s))
@@ -835,7 +827,7 @@ def parse():
             # conflict resolution tells a human to do) and EVERY day line vanished
             # silently: read printed "The spine is empty", and the next put
             # wrote a one-day file over the rest. Nothing keyed off `problems`
-            # could catch it, because problems was empty. (North, round 9.)
+            # could catch it, because problems was empty.
             problems.append("line %d: '%.20s' sits outside any ## section "
                             "(a section header is missing)" % (n, key))
             continue
@@ -847,8 +839,8 @@ def parse():
             # validated below: `2026-02-30` matches the shape regex and then
             # detonates in the run-collapse date arithmetic, taking the
             # session-start read down with a traceback in the one function
-            # whose whole design is degrade-never-block. Round 6 hardened the
-            # rollup branch and left this one on shape alone. (North, round 7.)
+            # whose whole design is degrade-never-block. An earlier fix hardened the
+            # rollup branch and left this one on shape alone.
             try:
                 datetime.date.fromisoformat(key)
             except ValueError as e:
@@ -863,8 +855,8 @@ def parse():
                 # must not refuse a write. It was the one rollup branch that
                 # still appended to the DAY list, so a single typo'd rollup
                 # key made `put` exit 1 while the banner said writes were
-                # allowed -- the round-13 defect, surviving in the one place
-                # the round-13 fix did not look. (Codex, cross-model review.)
+                # allowed -- an earlier defect, surviving in the one place
+                # its fix did not look.
                 roll_bad.append(RollProblem(
                     "line %d: '%s' is not a date range" % (n, key), key))
                 continue
@@ -872,7 +864,7 @@ def parse():
             # and then detonates in span_days (ValueError), and a reversed key
             # gives size 0 and a ZeroDivisionError in the forget chain walk.
             # Both are reachable from a hand-resolved conflict, which the README
-            # tells a human to do. (North, 2026-07-28.)
+            # tells a human to do.
             a, _, b = key.partition("..")
             try:
                 if datetime.date.fromisoformat(a) > datetime.date.fromisoformat(b):
@@ -897,7 +889,7 @@ def parse():
             # current, and `read` prints a two-day summary as the summary of
             # four days at exit 0. Comparing the recorded count against the
             # key's current span turns that whole class, hand repairs
-            # included, into a problems entry. (North, round 11.)
+            # included, into a problems entry.
             cnt, _, rest = text.partition("|")
             # `16d` or `16d/a3f91c02`. The digest is optional so a rollup
             # written before it existed still parses; every new write carries
@@ -907,7 +899,7 @@ def parse():
             # the full new width, so a legacy 8-hex line could never match and
             # every one of them was falsely reported stale and dropped from
             # the read. An open-ended width here is what made a format change
-            # silently break the format it replaced. (Codex, round 3.)
+            # silently break the format it replaced.
             m_cnt = re.fullmatch(r"(\d+)d(?:/([0-9a-f]{8}|[0-9a-f]{16}))?",
                                  cnt.strip())
             if not m_cnt:
@@ -920,7 +912,7 @@ def parse():
                 # A duplicate DAY key is caught loudly; a duplicate rollup key
                 # used to be deduped silently, last-in-file wins, and the next
                 # put dropped the other side at exit 0. Same asymmetry, on
-                # exactly the resolution the docs recommend. (North, r11.)
+                # exactly the resolution the docs recommend.
                 # The FIRST occurrence is in `rollups`, so the key is real and
                 # `forget <key>` clears the pair.
                 roll_bad.append(RollProblem(
@@ -931,7 +923,7 @@ def parse():
                                 rest.strip())
     # THE check the count exists for. A key that still names an aligned block
     # is not enough: the block may now hold different days than the summary
-    # describes. (North, round 11.)
+    # describes.
     pos = {d: i for i, (d, _) in enumerate(days)}
     for k, r in rollups.items():
         a, _, b = k.partition("..")
@@ -960,7 +952,7 @@ def parse():
                     k, stored=True, stale=True))
     # `save` always writes both headers, so their absence is an assertion
     # rather than a heuristic, and it names the cause where the per-line check
-    # above can only name a symptom. (North, round 9.)
+    # above can only name a symptom.
     for want in ("days", "rollups"):
         if want not in seen_sections:
             problems.append("the '## %s' section header is missing (save() "
@@ -984,7 +976,7 @@ def lock():
     the normal path here, not a corner: the day-close write runs once per
     session, several sessions can close on the same day, and a fleet host runs
     agent invocations concurrently from more than one trigger.
-    (North, 2026-07-28. Measured: a day line lost in 7 of 8 overlapping runs.)"""
+    Measured without the lock: a day line lost in 7 of 8 overlapping runs."""
     if _LOCK or fcntl is None:
         return
     try:
@@ -993,7 +985,7 @@ def lock():
     except OSError as e:
         # open() sat outside the try, so an unwritable Journal tracebacked past
         # the die() two lines below. This file's standard is that the
-        # day-close hot path never tracebacks. (North, round 11.)
+        # day-close hot path never tracebacks.
         die("Could not lock %s: %s" % (journal_dir() / ".spine.lock", e))
     _LOCK.append(f)
 
@@ -1008,27 +1000,25 @@ def load(write=True, tell=False):
     in-flight `put`) and DEGRADE rather than refuse. They borrowed the writer's
     refusal, so `read`'s own printed remedy, "Run: ... due", exited 1 against a
     conflicted file: a printed command that does not run as printed, and the
-    advisory you reach for first refusing the state it exists to diagnose.
-    (North, round 8.)"""
+    advisory you reach for first refusing the state it exists to diagnose."""
     if write:
         lock()
     days, rollups, problems, roll_bad = parse()
     # A DAY-level problem means the day set cannot be trusted, so every write
     # refuses. A ROLLUP-level one must not: rollups are a cache, and refusing
-    # to let the tool clear its own cache made detection terminal. The round-11
-    # count check appended to `problems`, so a stale rollup refused `forget`,
+    # to let the tool clear its own cache made detection terminal. The
+    # count check once appended to `problems`, so a stale rollup refused `forget`,
     # `forget --orphaned`, `roll` AND `put` -- every escape hatch behind the
     # gate the finding tripped, with hand-editing the spine file (which its
     # own header forbids) the only way out, and the day-close write broken
     # from that day on. Detection was the right half; this is the other half.
-    # (North, round 12.)
     if roll_bad:
         print("!! %d rollup problem(s) in %s. Writes are still allowed so you "
               "can clear them:" % (len(roll_bad), spine_path().name), file=sys.stderr)
         for r in roll_bad:
             # Per-problem remedy, not one banner for all five: three of them
             # are not in `rollups` at all, so a blanket `forget <key>` exited
-            # 1 and `--orphaned` cleared nothing. (North, round 13.)
+            # 1 and `--orphaned` cleared nothing.
             print("!!   %s\n!!     clear it: %s" % (r.msg, r.remedy()),
                   file=sys.stderr)
         print("!! They re-accrue from `%s due`." % ME, file=sys.stderr)
@@ -1043,7 +1033,7 @@ def load(write=True, tell=False):
         print("!! Writes are refused until it parses.")
         print()
         days = sorted(set(days))
-    # The two lists are returned APART. Merging them is the defect: round 12
+    # The two lists are returned APART. Merging them is the defect: an earlier fix
     # split them in this function's write gate and in cmd_read and left the
     # merge here, so cmd_due and cmd_missing kept treating a clearable cache
     # problem as a fatal one -- printing "any rollup written now would be
@@ -1051,7 +1041,7 @@ def load(write=True, tell=False):
     # second sentence false (`roll` in that state exits 0 and writes). One
     # stale key suppressed 11 genuinely-due rollups, and since the day-close
     # ritual builds its rollups from `due`, accrual stopped. A caller has to name
-    # which kind it means. (North, round 13.)
+    # which kind it means.
     return (days, rollups, problems, roll_bad) if tell else (days, rollups)
 
 
@@ -1083,7 +1073,7 @@ def save(days, rollups):
     # with "" and the file gained a blank line at EOF, which `git diff
     # --check` flags on every commit that touches it. Deleting that line by
     # hand does not hold (the next write puts it back, as it did on 38022e6);
-    # the fix belongs in the writer. (Codex, cross-model review, round 2.)
+    # the fix belongs in the writer.
     while out and not out[-1]:
         out.pop()
     # Atomic replace, never truncate-in-place: a crash or a concurrent reader
@@ -1095,7 +1085,7 @@ def save(days, rollups):
     except (OSError, ValueError) as e:
         # Remove the partial file on the way out. It is gitignored, so leaving
         # it made a failed write accumulate silently in the Journal rather than
-        # show up as something to clean. (North, round 13.)
+        # show up as something to clean.
         try:
             tmp.unlink()
         except OSError:
@@ -1141,8 +1131,7 @@ def _broken_ancestor(p):
     indistinguishable from it to a caller that only checks the leaf. Walk up
     to the first ancestor that is actually there (lexists survives a
     dangling symlink; stat/exists does not) and ask whether THAT one is
-    either a dead symlink or simply not a directory at all. (Vega; the
-    non-directory-ancestor half, class-completion sweep.)"""
+    either a dead symlink or simply not a directory at all."""
     for anc in p.parents:
         if os.path.lexists(anc):
             if os.path.islink(anc) and not os.path.exists(anc):
@@ -1161,7 +1150,7 @@ def _stat_state(p, istype):
     how the symlinked journal `_warn_wrong_tree` documents as supported
     breaks. `islink`/`lexists` are plain `lstat` and cannot themselves raise
     the way `stat` does, so they are safe to call after `stat` already
-    failed. (North; ancestor case, Vega.)"""
+    failed."""
     try:
         return istype(os.stat(p).st_mode), None
     except (FileNotFoundError, NotADirectoryError) as e:
@@ -1177,7 +1166,7 @@ def _dir_state(p):
     collapses: it returns False for an unreachable path from 3.13 on and raises
     before it, so "not a directory" and "cannot be reached" arrive as one.
     A caller that must refuse names the error; a caller that is only guessing
-    treats it as no match. (North.)"""
+    treats it as no match."""
     return _stat_state(p, _stat.S_ISDIR)
 
 
@@ -1210,7 +1199,7 @@ def _day_files(d, prefix):
     """The `<prefix>*.md` files in `d`, none when `d` is not there. Not
     `glob()`: it swallows every OSError, so an unsearchable directory reads as
     an empty one, and `missing` then calls a day with a real archived journal
-    behind it a fabricated line, exit 0. (North.)
+    behind it a fabricated line, exit 0.
 
     Also refuses when `d` ITSELF is broken, not only when it is unsearchable:
     a dangling symlink, one dangling further up, OR `d` existing as the wrong
@@ -1220,8 +1209,7 @@ def _day_files(d, prefix):
     harm this function's own docstring already names for the unsearchable
     case, just through a sibling door. `lexists` alone covers the dangling-
     symlink-at-the-leaf case too now (a symlink always lexists, live or
-    dead), so it subsumes the old plain `islink` check. (Vega; the wrong-
-    type case, class-completion sweep.)
+    dead), so it subsumes a plain `islink` check.
 
     Does NOT check each individual NAME through `_present` -- deliberately
     not this function's job. The archive call below passes prefix="", so
@@ -1259,7 +1247,7 @@ def journal_dates():
     real_date, not the shape regex: a mistyped filename like
     journal-2026-02-30.md otherwise sticks in `missing` forever, because both
     `draft` and `put` refuse it and no command clears it. The third date gate,
-    missed when round 8 unified the other two. (North, round 9.)"""
+    missed when the other two were unified."""
     found, bad = set(), []
     for p in _day_files(journal_dir(), "journal-"):
         # The EXACT canonical name, not a date found anywhere in it.
@@ -1267,8 +1255,7 @@ def journal_dates():
         # that day, while journal_files() only opens `journal-<date>.md`, so
         # `missing` reported the spine current for a day `draft` and `put`
         # both refuse as having no journal. The two filename rules have to be
-        # one rule, the same way the two DATE gates were unified in round 8.
-        # (Codex, cross-model review, round 2.)
+        # one rule, the same way the two DATE gates were unified.
         stem = p.stem[len("journal-"):]
         if real_date(stem):
             # Gated on real_date: only a genuine day file pays for its own
@@ -1330,7 +1317,7 @@ def needed(days, rollups, budget):
         # which emits no trailing multi-day block at budget 120 but does at low
         # ones (first at T=4 for budget 2, T=256 for budget 8), so `due
         # --budget 8` would have reopened it through a documented flag. Enforce
-        # it here rather than assert it in a comment. (North, round 8.)
+        # it here rather than assert it in a comment.
         if hi >= T:
             return
         want.add((lo, hi))
@@ -1338,8 +1325,7 @@ def needed(days, rollups, budget):
         # raw day lines, so its halves are not an input to anything now, and
         # they never appear in a cover at any LARGER T either.
         #
-        # What this does and does not buy, measured (North, round 2, 2026-07-28,
-        # correcting a figure I had asserted from his round 1 without testing):
+        # What this does and does not buy, measured:
         # a COLD rebuild at T=400 costs 68 rollups instead of 280. Under LAZY
         # accrual, which is the regime this actually runs in, it saves nothing:
         # simulating T=1..800 building whatever needed() returns each day, both
@@ -1371,7 +1357,7 @@ def all_pending(days, rollups):
             # not honour that, so `due --all` wrote a rollup over TODAY and the
             # next day-close `put` on the same day hit the rewrite refusal the
             # ritual promises cannot happen. needed() enforces the same guard
-            # directly. (North round 6, 2026-07-28.)
+            # directly.
             if hi >= T:
                 continue
             if key_of(days, lo, hi) not in rollups:
@@ -1407,7 +1393,7 @@ def parse_budget(args, verb):
     the read agree: they did not, and because cover(T,40) blocks are ANCESTORS
     of cover(T,120) blocks, needed(120) never demanded them. Lowering the only
     knob on the read made the read BIGGER and pointed at a `due` that reported
-    nothing to do. (North, 2026-07-28.)"""
+    nothing to do."""
     rest, budget = [], BUDGET
     i = 0
     while i < len(args):
@@ -1433,7 +1419,7 @@ def cmd_read(args):
         # A conflicted or hand-broken SPINE.md must not take the session-start
         # read down with it. Say what is wrong, loudly, then print whatever
         # survived: degrading beats a blank history. Same principle as a
-        # missing rollup. (North, 2026-07-28.)
+        # missing rollup.
         print("!! %s is malformed and this read is INCOMPLETE:" % spine_path().name)
         for p in problems:
             print("!!   %s" % p)
@@ -1457,7 +1443,7 @@ def cmd_read(args):
     # banner is loud but the LINE is what gets carried forward. The degrade
     # machinery three lines below already does the right thing, so route it
     # there: strictly more information, and it is what the surrounding comment
-    # already promises. (North, round 12.)
+    # already promises.
     # Taken from parse(), not re-derived. The same predicate written twice is
     # two things that can drift; parse() already decided, so ask it.
     stale = {r.key for r in roll_bad if r.stale}
@@ -1466,7 +1452,7 @@ def cmd_read(args):
     # needed() returns early for any key present in `rollups` and a stale key
     # is present). Both landed in one list under one remedy, so the read told
     # a reader to run `due`, and `due` answered "Fix SPINE.md first". Keep the
-    # two causes apart all the way to the message. (North, round 13.)
+    # two causes apart all the way to the message.
     lines, gaps_missing, gaps_stale = [], [], []
 
     def emit_day(d, t):
@@ -1479,7 +1465,7 @@ def cmd_read(args):
         folds them to about 4, spending a sixth of the budget on nothing and
         pushing that much real history past the withhold edge. A partially
         drained queue is exactly when that branch runs, and it is a blessed
-        state rather than an error. (North, round 10.)"""
+        state rather than an error."""
         # Collapsed on OUTPUT only: the lines stay on disk, so the day set and
         # every rollup key are untouched.
         m = EMPTY.match(t)
@@ -1489,13 +1475,13 @@ def cmd_read(args):
             # has holes (days with no journal at all), and rendering
             # first..last across one produced a line whose range implies more
             # days than its own count: internally contradictory, and an LLM
-            # reads the range not the count. (North, 2026-07-28.)
+            # reads the range not the count.
             # A run is a Run object, not a delimiter-encoded string. It was
             # joined on "; " (which legally occurs inside a clause, so four
             # days rendered as five fragments), then on "\x00" (which is
             # legally day text, so a NUL in a journal line corrupted the same
             # way). Any in-band delimiter has a character that breaks it;
-            # holding the fields as data has none. (North r13, Codex r2.)
+            # holding the fields as data has none.
             if lines and isinstance(lines[-1], Run):
                 run = lines[-1]
                 if (datetime.date.fromisoformat(d)
@@ -1540,7 +1526,6 @@ def cmd_read(args):
             # LINE_CHARS caps what `put` accepts, but the collapse concatenates
             # clauses, so 20 adjacent contentless days with distinct clauses
             # rendered as one 1,117-char line and the byte budget was advisory.
-            # (North, round 11.)
             out.append(ln2 if len(ln2) <= LINE_CHARS
                        else ln2[:LINE_CHARS - 5] + " ...)")
         else:
@@ -1551,14 +1536,14 @@ def cmd_read(args):
     # per day and grows 1:1 with history forever, which is the exact cost the
     # spine exists to remove. Keep the newest `budget` lines (recency is what
     # a session start needs) and say plainly that the old end is missing
-    # because the compressions were never written. (North, round 6.)
+    # because the compressions were never written.
     dropped = 0
     if len(lines) > budget:
         dropped, lines = len(lines) - budget, lines[-budget:]
     # State the range this read actually CONTAINS. After truncation the header
     # was still printing days[0][0], so the first line an agent reads claimed
     # coverage the body does not have; the warning below it is not enough,
-    # because the header is the one that gets believed. (North, round 9.)
+    # because the header is the one that gets believed.
     if dropped:
         print("Journal spine: %d days recorded, %s to %s. THIS READ COVERS "
               "ONLY %s onward (see the warning below)."
@@ -1573,7 +1558,7 @@ def cmd_read(args):
     if dropped:
         # The oldest surviving line may be a ROLLUP, whose key is a range, so
         # take the part before `..` or the message reads "history before
-        # 2025-02-02..2025-02-17". (North, round 7.)
+        # 2025-02-02..2025-02-17".
         edge = lines[0].split(" |")[0].split("..")[0]
         if gaps_missing or gaps_stale:
             what = []
@@ -1588,7 +1573,7 @@ def cmd_read(args):
                      ", ".join(what), edge))
             # Name only the command that runs in THIS state. `due` cannot
             # clear a stale rollup: needed() returns early for a key that is
-            # present, and a stale one is present. (North, round 13.)
+            # present, and a stale one is present.
             if gaps_stale:
                 print("!! Drop the stale one(s) first, then run `%s due`:" % ME)
                 for k in gaps_stale:
@@ -1599,7 +1584,6 @@ def cmd_read(args):
             # Every rollup that could help exists. The budget is simply below
             # what any tiling of this history can achieve, so pointing at `due`
             # would be an unactionable loop: it correctly reports nothing due.
-            # (North, round 7.)
             print("!! %d older line(s) WITHHELD: a budget of %d cannot cover "
                   "%d days no matter what is compressed (blocks are aligned "
                   "powers of two and the newest day is never compressed, so "
@@ -1638,7 +1622,6 @@ def cmd_missing(args):
     # file's header states was never actually checked. Report it here rather
     # than refuse: the line may be real and its journal merely unarchived, so
     # naming it is the honest move and `put` still rewrites it.
-    # (Codex, cross-model review.)
     orphan_days = sorted(d for d, _ in days if d not in dates)
     if orphan_days:
         print("%d spine day(s) with NO journal file behind them:"
@@ -1662,7 +1645,6 @@ def cmd_missing(args):
             # "current" is the wrong word for a file that refuses writes, and
             # the count is inflated: sorted(set(days)) dedupes identical tuples
             # only, so both sides of a conflicted day survive as two days.
-            # (North, round 9.)
             print("No journal is missing a line, but %s does NOT parse, so "
                   "this count is unreliable and every write is refused. Fix "
                   "the file first." % spine_path().name)
@@ -1724,13 +1706,13 @@ def cmd_put(args):
         # days are normal. Rewriting the day's own line is not a violation of
         # append-only (the day SET is unchanged, so every rollup key still
         # resolves); only a rollup that already summarized the old text goes
-        # stale, so refuse just that case. (North, 2026-07-28.)
+        # stale, so refuse just that case.
         covering = [k for k in rollups
                     if k.split("..")[0] <= date <= k.split("..")[1]]
         if covering:
             # Name the SMALLEST covering span: cmd_forget's chain walk climbs
             # upward, so the widest one drops only itself and the printed
-            # remedy loops (3 refusals for 1 edit). (North, 2026-07-28.)
+            # remedy loops (3 refusals for 1 edit).
             smallest = min(covering, key=span_days)
             if rebuild:
                 # Blocks nest, so any rollup built ON a coverer also contains
@@ -1801,9 +1783,9 @@ def cmd_due(args):
     if problems:
         # DAY-level only. The banner above says writes are refused; printing a
         # `roll ...` command underneath it breaks the contract at the top of
-        # this file that every printed command runs as printed. (North, r11.)
+        # this file that every printed command runs as printed.
         # A rollup problem must NOT reach here: writes are genuinely allowed
-        # in that state, and gating on it stopped the queue dead. (r13.)
+        # in that state, and gating on it stopped the queue dead.
         print("Fix %s first; any rollup written now would be refused."
               % spine_path().name)
         return
@@ -1823,21 +1805,21 @@ def cmd_roll(args):
     days, rollups = load()
     # UNION, not `or`. With `or`, a non-empty needed() excluded the entire
     # all_pending set, so `due --all` printed a roll command that roll itself
-    # refused: the same divergence round 6 closed for the due/roll pair,
+    # refused: the same divergence already closed for the due/roll pair,
     # reopened through --all, and a direct breach of the contract at the top of
-    # this file that every printed command runs as printed. (North, round 7.)
+    # this file that every printed command runs as printed.
     if args[0] in rollups:
         # Overwriting is safe for the same reason `put` may rewrite a day line:
         # the day SET is untouched, so no key is invalidated. It used to fall
         # through to "Nothing left to compress." at EXIT 0 on a complete tree,
         # silently discarding a correction, while `put` and `roll` are the
-        # documented way to correct a line. (North, round 11.)
+        # documented way to correct a line.
         ends = args[0].split("..")
         lo = next((i for i, (d, _) in enumerate(days) if d == ends[0]), None)
         hi = next((i for i, (d, _) in enumerate(days) if d == ends[1]), None)
         if lo is None or hi is None:
             # cmd_forget already anticipates this state; the overwrite path
-            # added beside it tracebacked instead. (North, round 12.)
+            # added beside it tracebacked instead.
             die("Rollup %s names a day that has no line in the spine (%s). It "
                 "is stale; run: %s forget --orphaned"
                 % (args[0], ends[0] if lo is None else ends[1], ME))
@@ -1867,7 +1849,7 @@ def cmd_roll(args):
     # on first-in-list made `due` say "nothing due" while `roll` demanded an
     # unrelated key, which reads like a bug. Order only matters to the extent
     # a block larger than RAW_MAX needs its two halves already written, and
-    # roll_prompt enforces exactly that. (North, 2026-07-28.)
+    # roll_prompt enforces exactly that.
     ready = {key_of(days, lo, hi) for lo, hi in todo
              if hi - lo <= RAW_MAX
              or (key_of(days, lo, (lo + hi) // 2) in rollups
@@ -1899,7 +1881,7 @@ def cmd_forget(args):
         # measured on a full 400-day tree), and dropping them one ancestor
         # chain at a time takes one invocation per size-2 leaf. Rollups are a
         # cache, so clearing the invalid ones in bulk is safe and is the only
-        # path that scales. (North, 2026-07-28.)
+        # path that scales.
         days, rollups, _problems, roll_bad = load(tell=True)
         gone = orphaned(days, rollups)
         # A rollup line the PARSER rejected never reaches `rollups`, so no key
@@ -1907,7 +1889,7 @@ def cmd_forget(args):
         # orphaned rollups", saved nothing, and left the line on disk, while
         # the banner named it as the remedy. save() rewrites the whole Rollups
         # section from the dict, so writing IS what drops those lines; the
-        # only bug was returning before the write. (North, round 13.)
+        # only bug was returning before the write.
         dropped = [r for r in roll_bad if not r.stored]
         if not gone and not dropped:
             print("No orphaned rollups: every rollup still names an aligned "
@@ -1933,7 +1915,7 @@ def cmd_forget(args):
         # "No rollup <key>" was true but useless when the line IS on disk and
         # the parser rejected it: the user read the key off the banner, ran
         # what the banner said, and got exit 1. Say which case this is and
-        # name the command that works. (North, round 13.)
+        # name the command that works.
         if any(r.key == args[0] and not r.stored for r in roll_bad):
             die("Rollup %s is on disk but does not parse, so no key names it. "
                 "Drop it with: %s forget --orphaned" % (args[0], ME))
@@ -1955,7 +1937,7 @@ def cmd_forget(args):
         # assumes alignment (it doubles the block size and snaps to it), so on
         # a ragged span it climbs through blocks that do not contain this one
         # and deletes rollups that never inherited from it. Drop just the
-        # stale key and point at the bulk path. (North, round 6.)
+        # stale key and point at the bulk path.
         del rollups[args[0]]
         save(days, rollups)
         print("Forgot %s. It was stale (its span is no longer an aligned "
@@ -1992,26 +1974,26 @@ def cmd_grep(args):
         # grep is the keyword entry point named in session_start, so a false
         # "no match" here is load-bearing. It discarded `problems` and
         # under-reported silently at exit 0 while `read` warned loudly about
-        # the same file. (North, round 10.)
+        # the same file.
         print("!! %s is malformed, so this search is INCOMPLETE:" % spine_path().name)
         for pr in problems:
             print("!!   %s" % pr)
         print()
     hits = ["%s | %s" % d for d in days if pat.search("%s %s" % d)]
-    # v is (count, text) since round 11; every rollup used to print as a
+    # v is (count, text); every rollup used to print as a
     # Python repr here and an anchored search could never match. Ten call
-    # sites were updated, this was the eleventh. (North, round 12.)
+    # sites were updated, this was the eleventh.
     hits += ["%s | %s" % (k, v.text) for k, v in sorted(rollups.items())
              if pat.search("%s %s" % (k, v.text))]
     if not hits:
         print("No match in the spine. For the full text, run:")
         # Quote the pattern like the path already is: an alternation prints as
-        # `rg -i north|codex '<path>'`, which as pasted pipes rg into codex,
-        # a real binary on this fleet. (North, 2026-07-28.)
+        # `rg -i spine|codex '<path>'`, which as pasted pipes rg into codex,
+        # a real binary on this fleet.
         # `--` before the pattern: shlex.quote stops the SHELL splitting it,
         # not rg reading it as a flag, so a pattern starting with `-` printed
         # a command that exits 2 ("error parsing flag -d"). Every command this
-        # tool prints has to run as printed. (Codex, cross-model review.)
+        # tool prints has to run as printed.
         print("  rg -i -- %s %s"
               % (shlex.quote(args[0]), shlex.quote(str(journal_dir()))))
         return
@@ -2024,8 +2006,8 @@ def cmd_grep(args):
 # -------------------------------------------------------------------- owed
 
 # One definition of "this session owes the Journal a line", shared by every
-# reminder that asks: a local session's prompt hook and a cluster lane's PULSE
-# tick both call this, so the two can never disagree about when to nag. It is
+# reminder that asks: a local session's prompt hook and a scheduled agent's
+# periodic tick both call this, so the two can never disagree about when to nag. It is
 # stateless on purpose. Each caller keeps its own cooldown and passes the time
 # it last reminded as `--since`.
 OWED_THRESHOLD = 5
@@ -2228,7 +2210,7 @@ def cmd_owed(args):
 # ---------------------------------------------------------------- selftest
 
 def cmd_selftest(args):
-    """Property checks for the index arithmetic. Every defect North found in
+    """Property checks for the index arithmetic. Every defect found in
     review was in the queue or the write ritual rather than in cover(), so the
     properties worth pinning are the ones a future edit to cover, needed,
     orphaned or forget could silently break."""
@@ -2260,7 +2242,7 @@ def cmd_selftest(args):
         nothing. A counter assertion is only meaningful beside a reachability
         assertion, so every probe below states how many cases actually got
         there. A claim needs an assertion that literally tests it, and that
-        applies to the tests themselves. (North, rounds 6 and 13.)"""
+        applies to the tests themselves."""
         check(n > 0, "%s -- %d cases reached the branch" % (label, n))
 
     print("cover():")
@@ -2286,7 +2268,7 @@ def cmd_selftest(args):
     # No tiling of [0,T) into aligned power-of-two blocks can use fewer than
     # popcount(T - 1) + 1 of them, so a smaller budget is unsatisfiable rather
     # under-compressed. Pin the real bound over many budgets so the next edit
-    # cannot quietly widen the gap. (North, round 7.)
+    # cannot quietly widen the gap.
     over = [(T, b) for b in (2, 5, 8, 10, 20, 40, 120)
             for T in range(1, 4100)
             if len(cover(T, b)) > max(b, floor_budget(T))]
@@ -2294,7 +2276,7 @@ def cmd_selftest(args):
     # Every emitted block must be a span `roll` can actually WRITE. all_pending
     # only enumerates aligned power-of-two runs, so a block outside that set is
     # a line the read prints and no rollup can ever fill: permanently stuck,
-    # with `due` correctly reporting nothing to do. The round-9 comment in
+    # with `due` correctly reporting nothing to do. The comment in
     # _cover guards the same class of bug from the other end. Splitting the
     # refill at `a + 1` instead of the midpoint emits 105 such blocks on this
     # grid, the first at T=24, and the only other check that notices is the
@@ -2361,7 +2343,7 @@ def cmd_selftest(args):
     # The present must stay a single day at EVERY budget: needed() and
     # all_pending() refuse to build a rollup reaching the newest day, so a
     # trailing multi-day block is one no rollup can ever fill. It used to
-    # appear below budget 16 and cost the oldest half of history. (North, r9.)
+    # appear below budget 16 and cost the oldest half of history.
     tail = [(T, b) for b in (2, 4, 8, 10, 16, 20, 40, 120)
             for T in range(2, 4000)
             if any(hi >= T and hi - lo > 1 for lo, hi in cover(T, b))]
@@ -2468,7 +2450,7 @@ def cmd_selftest(args):
     # of the N+1 positions produced the same appended sequence: an append test
     # run N+1 times, structurally incapable of catching an interior insert.
     # Days are now two apart so a real date exists between any pair, and the
-    # probe asserts the new day landed where it was meant to. (North, round 6.)
+    # probe asserts the new day landed where it was meant to.
     viol = misplaced = survivors = 0
     for N in range(2, 33):
         ds = days_of(N)
@@ -2494,7 +2476,7 @@ def cmd_selftest(args):
     # `viol == 0` is also what an EMPTY intersection prints, which is the same
     # trap the multi-day probe fell into: if no key ever survived the insert,
     # the loop body never ran and the check reports ok having compared
-    # nothing. (North, round 13.)
+    # nothing.
     check_reached(survivors, "the surviving-key comparison is non-vacuous")
 
     print("the recorded day count catches a multi-day insert:")
@@ -2512,16 +2494,15 @@ def cmd_selftest(args):
     # make it meaningful because it counted the wrong antecedent. Deleted
     # rather than tuned; the substitution probe below is the falsifiable
     # version of the same property and it does have a false case. Removing the
-    # shape ends the round. (Codex, r3.)
+    # shape ends the round.
     # That probe reaches its branch but can never falsify it: under pure
     # INSERTION, `span == count` implies no day landed between the endpoints,
     # which implies the set is unchanged. `blind == 0` is a tautology there,
     # and counting cases that merely survive orphaned() does not show
-    # otherwise -- 6,301 reached, 0 with a changed day set. The reachability
-    # assertion I added measured the wrong antecedent. The falsifiable
+    # otherwise -- 6,301 reached, 0 with a changed day set. A reachability
+    # assertion measures the wrong antecedent. The falsifiable
     # version is SUBSTITUTION, which a merge can produce and which the count
-    # cannot see; it is what day_digest exists for. (Codex, cross-model
-    # review, correcting my round-13 fix.)
+    # cannot see; it is what day_digest exists for.
     sub_blind = sub_reached = 0
     for N in range(4, 26):
         ds = days_of(N, step=8)
@@ -2596,7 +2577,7 @@ def cmd_selftest(args):
             break
     check(set(cov) <= chain, "one forget of the smallest span drops every coverer")
 
-    # Everything above is index arithmetic. The round-12 and round-13 findings
+    # Everything above is index arithmetic. Two later findings
     # were not: they were about WHICH problems gate which commands, and that
     # is only observable by running the commands. A claim needs an assertion
     # that literally tests it, so the routing gets real coverage rather than a
@@ -2605,8 +2586,7 @@ def cmd_selftest(args):
     # A throwaway tree, never a real one. Every child runs with cwd inside the
     # temp root and with $AGENT_VAULT REMOVED unless the case under test needs
     # it, so the walk in _resolve_root() can only find the temp config and no
-    # write can reach a real journal even if discovery breaks. (North, round
-    # 13.)
+    # write can reach a real journal even if discovery breaks.
     import shutil
     import subprocess
     import tempfile
@@ -2829,7 +2809,7 @@ def cmd_selftest(args):
     # save(), which already drops the malformed line, so --orphaned then had
     # nothing to do and the "line is gone" assertion passed on the wrong
     # cause. Assert the line is present immediately before the command under
-    # test. (Codex, round 3.)
+    # test.
     td, jdir, spine_md = _mkroot(["this is a malformed rollup line"])
     try:
         before = "malformed rollup line" in spine_md.read_text(encoding="utf-8")
@@ -2904,9 +2884,8 @@ def cmd_selftest(args):
     # DIFFERENT tree than the one the caller is standing in is not a corner
     # case: it is the documented deployment, one variable per session pointing
     # at the primary checkout, and a worktree session is standing somewhere
-    # else. The write has to land where the caller is. (North, 2026-07-28,
-    # carried across the extraction: the witness changed from __file__ to the
-    # config file, the ordering did not.)
+    # else. The write has to land where the caller is. The witness is the
+    # config file, and the ordering is what this case pins.
     here_td, here_j, here_spine = _mkroot([], ndays=1)
     away_td, away_j, away_spine = _mkroot([], ndays=1)
     try:
@@ -3007,7 +2986,7 @@ def cmd_selftest(args):
         # rather than raising, so the exact regression _paths() forbids was
         # invisible and the suite stayed 74/74 green. The name said "absent"
         # and the assertion tested "did not crash". Assert that the file is
-        # NOT read. (Mechanical review, round 1.)
+        # NOT read.
         (jdir / "archive").mkdir()
         (jdir / "archive" / "2026-03-04.md").write_text("# old",
                                                         encoding="utf-8")
@@ -3133,7 +3112,7 @@ def cmd_selftest(args):
     # The warning names the RESOLVED journal, not the root. Only a symlinked
     # journal separates the two: everywhere else the root is a textual prefix
     # of the journal, so a substring check cannot tell the fix from the bug it
-    # replaced. (Mechanical lane found this unpinned.)
+    # replaced.
     td, jdir, spine_md = _mkroot([], ndays=0)
     away = Path(tempfile.mkdtemp(prefix="vardemem-away-"))
     elsewhere = Path(tempfile.mkdtemp(prefix="vardemem-other-"))
@@ -3152,7 +3131,7 @@ def cmd_selftest(args):
 
     # CONTENT that is not UTF-8, at all three read sites and the write. The
     # suite pinned the path-VALUE half of this class twice and none of the
-    # content half. (North.)
+    # content half.
     td, jdir, spine_md = _mkroot([], ndays=1)
     try:
         (jdir / "journal-2026-01-01.md").write_text("# a day", encoding="utf-8")
@@ -3199,7 +3178,7 @@ def cmd_selftest(args):
 
     # An unreadable journal DIRECTORY. The exists() probe used to sit outside
     # the guard and stat raised PermissionError there, so the one shape the
-    # guard exists for was the one it missed. (North.)
+    # guard exists for was the one it missed.
     td, jdir, spine_md = _mkroot([], ndays=1)
     try:
         os.chmod(jdir, 0o000)
@@ -3208,7 +3187,7 @@ def cmd_selftest(args):
         # journal_files(). What it did there depended on the interpreter:
         # exists() raised up to 3.12 and returns False from 3.13 on, so this
         # tree tracebacked on one Python and said "No journal" on the next,
-        # with the journal in it. Neither is a refusal. (North.)
+        # with the journal in it. Neither is a refusal.
         rc2, out2 = _run(jdir.parent, "draft", "2026-01-01")
         check(rc != 0 and "Traceback" not in out and "Could not read" in out,
               "an unreadable journal directory refuses without a traceback")
@@ -3243,7 +3222,7 @@ def cmd_selftest(args):
     # unreadable journal from every hook that keys on it. Reached through a
     # symlinked journal, which _warn_wrong_tree documents as the supported way
     # to put a journal outside its root. is_dir() collapsed this into "absent"
-    # from 3.13 on and raised before it. (North.)
+    # from 3.13 on and raised before it.
     td, jdir, spine_md = _mkroot([], ndays=1)
     outer = Path(tempfile.mkdtemp(prefix="vardemem-outer-"))
     try:
@@ -3262,7 +3241,7 @@ def cmd_selftest(args):
         shutil.rmtree(outer, ignore_errors=True)
         shutil.rmtree(td, ignore_errors=True)
 
-    # Door 1 (North, round 3): a broken symlink is not the SAME unreachable
+    # Door 1: a broken symlink is not the SAME unreachable
     # case as a permission-blocked target above -- ENOENT on a symlink used to
     # fold into "absent", answering EXIT_NO_JOURNAL for a journal that WAS
     # configured, just pointing nowhere. `_warn_wrong_tree` documents a
@@ -3278,7 +3257,7 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # Door 2 (North, round 3): the WALK that finds the config, not the journal
+    # Door 2: the WALK that finds the config, not the journal
     # it points to, had the identical unreachable-folds-into-absent shape at
     # two sites. `Path.cwd().resolve()` itself raises when cwd cannot be
     # reached (on macOS at least; getcwd() is more forgiving on Linux, see
@@ -3402,7 +3381,7 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # Vega's review of this PR: the walk's config probe goes through
+    # The walk's config probe goes through
     # _stat_state (the check just above), but the $AGENT_VAULT fallback
     # built its config path by hand and never ran it through anything --
     # the identical broken-symlink-config case, reached through the OTHER
@@ -3422,7 +3401,7 @@ def cmd_selftest(args):
         shutil.rmtree(td, ignore_errors=True)
         shutil.rmtree(outside, ignore_errors=True)
 
-    # Vega's review, second finding: islink(p) only ever inspects p's OWN
+    # islink(p) only ever inspects p's OWN
     # final component. A journal configured as "link/history" where "link"
     # itself dangles never gets that far -- stat() fails resolving THROUGH
     # "link", and the leaf "history" was never a symlink at all -- so the
@@ -3444,7 +3423,7 @@ def cmd_selftest(args):
     # The same defect through the ARCHIVE, where it is worse: glob() swallows
     # the OSError, so an unsearchable archive reads as an empty one and
     # `missing` calls a day with a real archived journal behind it a
-    # fabricated line, exit 0. A refusal is recoverable; that is not. (North.)
+    # fabricated line, exit 0. A refusal is recoverable; that is not.
     td, jdir, spine_md = _mkroot([], ndays=1)
     arc = jdir / "archive"
     try:
@@ -3462,9 +3441,9 @@ def cmd_selftest(args):
     # The same defect through the ARCHIVE again, as a BROKEN SYMLINK rather
     # than an unreadable directory: the archive volume unmounted, or its
     # symlink target moved. _day_files folded the resulting FileNotFoundError
-    # into "empty" exactly like the unsearchable case just above did before
-    # North's fix, and a real archived day looked fabricated at exit 0
-    # instead of the archive itself refusing to be listed. (Vega.)
+    # into "empty" exactly like the unsearchable case just above once did,
+    # and a real archived day looked fabricated at exit 0
+    # instead of the archive itself refusing to be listed.
     td, jdir, spine_md = _mkroot([], ndays=1)
     real_archive = Path(td) / "real-archive"
     try:
@@ -3481,10 +3460,10 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # Same class again, through the SPINE path (MAJOR, not blocking: nothing
+    # Same class again, through the SPINE path (less severe: nothing
     # is destroyed here, the spine is derived). {"spine": "sub/SPINE.md"} with
     # "sub" a dangling symlink read as "the spine is empty" before this fix,
-    # degrading every command silently rather than naming the break. (Vega.)
+    # degrading every command silently rather than naming the break.
     td = Path(tempfile.mkdtemp(prefix="vardemem-spinesymlink-"))
     try:
         jdir = td / "history"
@@ -3666,7 +3645,7 @@ def cmd_selftest(args):
         (Path(td) / CONFIG_NAME).write_text('{"spine": "S.md"}', encoding="utf-8")
         rc, out = _run(jdir, "read")
         check(rc == EXIT_NO_JOURNAL, "a config with no journal key does too")
-        # Vega's review, coverage gap: $AGENT_VAULT unset (above) and
+        # $AGENT_VAULT unset (above) and
         # $AGENT_VAULT pointing at a tree with no config of its own are
         # different branches in _resolve_root -- the second still has to
         # fall out through _read_config's own FileNotFoundError, which nothing
@@ -3697,7 +3676,7 @@ def cmd_selftest(args):
         check(rc == 1, "a malformed config is a real refusal, exit 1")
         # A config that cannot be READ is the same kind of answer as one that
         # cannot be parsed. Widening that OSError to the quiet code had nothing
-        # to catch it. (North.)
+        # to catch it.
         cfg = Path(td) / CONFIG_NAME
         cfg.write_text('{"journal": "history"}', encoding="utf-8")
         os.chmod(cfg, 0o000)
@@ -3772,7 +3751,7 @@ def cmd_selftest(args):
         check(rc == EXIT_NO_JOURNAL,
               "an untrusted cwd with a real config is walked past, not "
               "read, when nothing else answers")
-        # North, round 8: the message above used to be indistinguishable
+        # The message above must stay distinguishable
         # from "genuinely nothing found anywhere", which is false here -- a
         # real check ran and found a real config, just not a trusted one.
         check(CONFIG_NAME in out and str(untrusted_dir.resolve()) in out
@@ -3800,7 +3779,7 @@ def cmd_selftest(args):
         finally:
             shutil.rmtree(env_td, ignore_errors=True)
 
-        # North, round 8, blocking 2: before the gate, a `d` on the walk
+        # Before the gate, a `d` on the walk
         # that HELD the journal layout could never also hold a real config
         # of its own -- the walk would already have claimed it. The gate
         # breaks that invariant, and the wrong-tree warning's hardcoded
@@ -3821,7 +3800,7 @@ def cmd_selftest(args):
             shutil.rmtree(env_td, ignore_errors=True)
             shutil.rmtree(worktree_td, ignore_errors=True)
 
-        # North, round 8, nit: $VARDEMEM_TRUST_FILE resolving a RELATIVE
+        # $VARDEMEM_TRUST_FILE resolving a RELATIVE
         # override against cwd would let the walk target supply its own
         # trust list -- the one path this mechanism did not already
         # require to be absolute, unlike every entry inside the file.
@@ -3848,7 +3827,7 @@ def cmd_selftest(args):
         shutil.rmtree(outer_td, ignore_errors=True)
         shutil.rmtree(trust_cfg, ignore_errors=True)
 
-    # Vega's review, coverage gap: Ctrl-C during a real run must exit 130,
+    # Ctrl-C during a real run must exit 130,
     # and nothing proved it. Spawning `read` directly and racing a signal
     # against it does not prove it either: a throwaway fixture finishes in a
     # few milliseconds, so a signal sent right after spawn as often lands
@@ -3872,7 +3851,7 @@ def cmd_selftest(args):
     # and this check fails on every tool installed exactly as documented --
     # while every other check passes through that same symlink, because they
     # spawn __file__ as a subprocess argument, which needs no loader at all.
-    # (North, round 4: caught on the installed path, not the direct one.)
+    # The installed path broke where the direct one did not, so test that one.
     driver = (
         "import importlib.machinery, importlib.util, time\n"
         "p = %r\n"
@@ -3889,7 +3868,7 @@ def cmd_selftest(args):
     # other import, and the install this loads through is the operator's OWN
     # ~/.local/bin, not this repo (whose checked-out copy .gitignore already
     # covers). selftest should not leave a __pycache__ in a directory it does
-    # not own. (Vega.)
+    # not own.
     p = subprocess.Popen([sys.executable, "-B", "-c", driver],
                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                           text=True)
@@ -4044,7 +4023,7 @@ def main():
     # <_io.TextIOWrapper>" with the handler never entered. Restoring SIGPIPE
     # to the default makes the process die the way every other Unix tool
     # does, whenever the write happens; the explicit flush inside the try
-    # pulls the remaining case back inside the handler. (North, round 6.)
+    # pulls the remaining case back inside the handler.
     if hasattr(signal, "SIGPIPE"):
         signal.signal(signal.SIGPIPE, signal.SIG_DFL)
     try:
@@ -4072,7 +4051,7 @@ def _run():
         # NOT the no-journal code. A journal that cannot be reached is a real
         # failure, and EXIT_NO_JOURNAL is the code a session-start caller goes
         # silent on, so answering it here hides an unreadable journal from
-        # every hook that keys on it. (North, #2 round 2.)
+        # every hook that keys on it.
         die("Could not reach the journal at %s: %s"
             % (journal_dir(), unreachable))
     if not is_dir:
