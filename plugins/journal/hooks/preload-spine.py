@@ -122,7 +122,7 @@ def _open_beneath(vault: Path, rel_parts, flags: int, mode: int = 0o600):
     on the first try, plus an outside WRITE from the dump. Documenting it as a
     residual was not good enough for a hook that injects into context and writes a
     git-auto-pushed file. Walking with fds removes the window entirely, because
-    there is no second resolution to race. (Codex terra security re-audit, #1446.)
+    there is no second resolution to race.
 
     `..` and absolute components are rejected outright rather than normalized, so
     the walk cannot be talked out of the tree by the caller either."""
@@ -368,7 +368,7 @@ def _run_spine_read(script, cwd, extra_args, timeout: float):
     failed to spawn, or the timeout fired); every other path returns the
     process's actual int, 0 included. Nothing enforces that split at the
     type level, so a caller keying behavior on `exit_code` must check `is
-    None` before comparing it against an int -- the round-2 regression this
+    None` before comparing it against an int -- a regression this
     file already carries a fix for came from exactly that gap.
 
     `read` is documented to exit 0 and degrade on a malformed spine, so a
@@ -440,7 +440,7 @@ _SPINE_RUNS_RE = re.compile(r"([=`~])\1{1,}")
 # into `_SPINE_RUNS_RE`'s repeated-run match. `(?m)` anchors `^` to every line,
 # not just the string start, since every line in spine content is a potential
 # heading start (`# SYSTEM
-# INSTRUCTIONS` passed the round-2/3 sanitizer unchanged). The `{0,3}` on the
+# INSTRUCTIONS` passed an earlier sanitizer unchanged). The `{0,3}` on the
 # leading spaces closes a gap: CommonMark allows up to
 # three spaces of indentation before an ATX heading, and `" # SYSTEM
 # INSTRUCTIONS"` still rendered as an H1 against the space-blind version of
@@ -523,7 +523,7 @@ def _sanitize_spine_content(text: str) -> str:
     `sanitize_title` before they ever reach model context. A Journal entry is an
     agent SUMMARY of external material (issues, PRs, Discord, mail), so the same
     threat applies here, just delayed by one summarization pass rather than
-    absent (codex cross-model review, PR #1535).
+    absent.
 
     `sanitize_title` cannot be reused as-is: it collapses newlines, which is
     correct for a single-line title field but would destroy the spine's
@@ -559,8 +559,8 @@ def _sanitize_spine_content(text: str) -> str:
     first version of this function used -- that suffix added 8 bytes per
     occurrence, and a Journal entry repeating a banner name hundreds of times
     could grow the sanitized text past what the PRE-sanitization compression
-    check had already decided fit (codex cross-model review, PR #1535, round 2:
-    demonstrated growing 3,471 B to 5,311 B with 230 repeats, silently pushing
+    check had already decided fit (measured
+    growing 3,471 B to 5,311 B with 230 repeats, silently pushing
     real newest-day content out of the fitted result)."""
     flat = _SPINE_RUNS_RE.sub(lambda m: m.group(0)[0], text)
     flat = _SPINE_RULE_RE.sub(lambda m: m.group(0)[0], flat)
@@ -585,7 +585,7 @@ def _fit_spine(text: str, allowance: int, script: str) -> str:
 
     Whole lines only: half a day line reads as a complete one -- which is also
     why an unfittable pointer is DROPPED rather than truncated mid-sentence; see
-    below (codex cross-model review, PR #1535)."""
+    below."""
     raw = text.rstrip("\n")
     if not raw.strip():
         return ""

@@ -266,12 +266,12 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w(UNTAGGED), spoof, env={"JOURNAL_CONFIG_DIR": str(empty_cfg)})[0] is False)
     write_cfg(home, {"enabled": True})
 
-    # ---- self-review findings (my own pass, before re-requesting review) ----
+    # ---- further edge cases ----
     print("fence handling (accepted limitation, see threat model)")
     write_cfg(home, {"enabled": True})
     note.write_text("", encoding="utf-8")
     # ACCEPTED BYPASS, named on purpose. A single linear pass means an UNCLOSED fence
-    # runs to end-of-document, hiding entries below it. The alternative (round 2) paired
+    # runs to end-of-document, hiding entries below it. The alternative paired
     # fences by lookahead, which desynchronized against the HTML-comment scanner and was
     # QUADRATIC (15s on a 10k-line note, past the 5s timeout, stalling every write).
     # A bypass costs one missing tag; a hang or a false deny blocks real work. Trade taken.
@@ -296,7 +296,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("non-unique old_string WITH replace_all -> replayed, and DENIES",
           run(me2, home)[0] is True)
 
-    # ---- round-3 review: the multiset had a THIRD bug, so identity is now whole-line ----
+    # ---- the multiset had a THIRD bug, so identity is now whole-line ----
     print("net-count cancellation")
     write_cfg(home, {"enabled": True})
     note.write_text("**Legacy.** old\n", encoding="utf-8")
@@ -360,14 +360,14 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w("**title ** ordinary prose"), home)[0] is False)
     check("valid bold is still an entry -> DENY", run(w("**Title.** prose"), home)[0] is True)
 
-    print("CommonMark separators are space/tab, not any unicode space (r6 #2)")
+    print("CommonMark separators are space/tab, not any unicode space")
     check("NBSP after '#' is NOT a heading, so the line below is not a block start -> allow",
           run(w("#\u00a0launch\n**Owner.** Sam will coordinate.\n"), home)[0] is False)
     check("NBSP-suffixed fence line does NOT close the fence -> allow",
           run(w("```text\ncode\n```\u00a0\n**Literal.** still inside the fence\n"),
               home)[0] is False)
 
-    print("inline CODE SPAN is literal, not raw HTML (r6 #6)")
+    print("inline CODE SPAN is literal, not raw HTML")
     check("documenting `<!--` in inline code does not swallow the note -> DENY",
           run(w("Syntax reminder: type `<!--` to open a comment.\n\n**Shipped.** body\n"),
               home)[0] is True)
@@ -375,21 +375,21 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w("Syntax reminder: type `<pre>` to open a pre block.\n\n**Shipped.** body\n"),
               home)[0] is True)
 
-    print("duplicate-occurrence contract (r6 #4)")
+    print("duplicate-occurrence contract")
     note.write_text("**Repeated.** Same body.\n", encoding="utf-8")
     check("adding a SECOND copy of an existing untagged entry -> DENY (occurrence-counted)",
           run(w("**Repeated.** Same body.\n\n**Repeated.** Same body.\n"), home)[0] is True)
 
-    print("whitespace-only edit is not a change (r6 #5)")
+    print("whitespace-only edit is not a change")
     note.write_text("**Legacy.** body\n", encoding="utf-8")
     check("whitespace-only edit to an untagged entry -> allow (normalized identity)",
           run(ed("**Legacy.**  body", "**Legacy.** body"), home)[0] is False)
 
-    print("round 6/7: an outsized DOCUMENT cannot hang the hook (r6 #3, r7 blocking)")
+    print("an outsized DOCUMENT cannot hang the hook")
     note.write_text("x" * 3_000_000, encoding="utf-8")
     r, _ = run(ed("**New.** untagged", "xxxx"), home, timeout=5)
     check("3MB existing note -> refused, not parsed; no hang", r is False)
-    # r7 BLOCKING: the ceiling must cover AFTER, not just BEFORE. A Write to an EMPTY note
+    # The ceiling must cover AFTER, not just BEFORE. A Write to an EMPTY note
     # carries the whole document in its payload, so `before` passes trivially while the
     # thing actually parsed is arbitrarily large.
     note.write_text("", encoding="utf-8")
@@ -467,7 +467,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "[call] **" in reason and "[decision]" not in reason)
     write_cfg(home, {"enabled": True})
 
-    # ---- round-2 review: order-dependence broke BOTH ways ----
+    # ---- order-dependence broke BOTH ways ----
     print("untagged-only comparison is order-independent")
     write_cfg(home, {"enabled": True})
 

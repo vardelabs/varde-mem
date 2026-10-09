@@ -451,7 +451,7 @@ def _paths():
     `selftest` is pure index arithmetic and reads no journal file, but the
     root was resolved at import, so a copy placed anywhere else exited 1 with
     "Cannot locate the vault" and the PR's "verification is re-runnable" claim
-    was false off the vault path. Round 12 answered that with a path-DEPTH
+    was false off the vault path. An earlier fix answered that with a path-DEPTH
     heuristic (`_SELFTEST and len(parents) > 3`), which fails for the one
     directory a reviewer actually copies to: a script at `/tmp` has 2 parents
     on Linux and 3 on macOS, so both fell through and died -- the exact
@@ -590,7 +590,7 @@ def _cover(T, alpha):
         # The right-edge test is `hi < T`, and relaxing it to `hi <= T` breaks
         # the spine. A block whose end lands on the newest day must halve all
         # the way to size 1, so the present is always its own single-day block.
-        # Round 8 taught needed() and all_pending() to stop asking for a rollup
+        # needed() and all_pending() therefore do not ask for a rollup
         # that reaches the newest day, because writing one makes the next
         # day-close `put` on that day hit the rewrite refusal. cover still EMITTED
         # such a block at low budgets. read then expanded it to one line per
@@ -710,9 +710,8 @@ def day_digest(day_keys):
     count` stays true, and the rollup asserts a summary of days it never saw,
     at exit 0, in the read that lands in every session. Measured: 464 such
     states across N=4..25. A count is too weak a fingerprint for the claim
-    being made; a digest is the right width. (Codex, cross-model review, on a
-    property the round-11 count field was introduced to guarantee.)"""
-    # 16 hex, not 8. At 32 bits a collision is constructible: Codex built one
+    being made; a digest is the right width."""
+    # 16 hex, not 8. At 32 bits a collision is constructible: review built one
     # (two different 4-day sets both digesting to 841cb002) and the read then
     # printed a summary of the wrong days at exit 0 with no warning. 64 bits
     # puts an accidental collision past any history this file will ever hold,
@@ -811,7 +810,7 @@ def parse():
             # the `forget --orphaned` that would clear it. Third instance of
             # that same misrouting; the fix is to ask which section we are in
             # everywhere a problem is raised, not to patch each branch as it
-            # is found. (Codex, cross-model review, round 2.)
+            # is found.
             if section == "days":
                 problems.append("line %d: no '|' separator, line dropped: %.40s"
                                 % (n, s))
@@ -840,7 +839,7 @@ def parse():
             # validated below: `2026-02-30` matches the shape regex and then
             # detonates in the run-collapse date arithmetic, taking the
             # session-start read down with a traceback in the one function
-            # whose whole design is degrade-never-block. Round 6 hardened the
+            # whose whole design is degrade-never-block. An earlier fix hardened the
             # rollup branch and left this one on shape alone.
             try:
                 datetime.date.fromisoformat(key)
@@ -856,8 +855,8 @@ def parse():
                 # must not refuse a write. It was the one rollup branch that
                 # still appended to the DAY list, so a single typo'd rollup
                 # key made `put` exit 1 while the banner said writes were
-                # allowed -- the round-13 defect, surviving in the one place
-                # the round-13 fix did not look. (Codex, cross-model review.)
+                # allowed -- an earlier defect, surviving in the one place
+                # its fix did not look.
                 roll_bad.append(RollProblem(
                     "line %d: '%s' is not a date range" % (n, key), key))
                 continue
@@ -900,7 +899,7 @@ def parse():
             # the full new width, so a legacy 8-hex line could never match and
             # every one of them was falsely reported stale and dropped from
             # the read. An open-ended width here is what made a format change
-            # silently break the format it replaced. (Codex, round 3.)
+            # silently break the format it replaced.
             m_cnt = re.fullmatch(r"(\d+)d(?:/([0-9a-f]{8}|[0-9a-f]{16}))?",
                                  cnt.strip())
             if not m_cnt:
@@ -1007,8 +1006,8 @@ def load(write=True, tell=False):
     days, rollups, problems, roll_bad = parse()
     # A DAY-level problem means the day set cannot be trusted, so every write
     # refuses. A ROLLUP-level one must not: rollups are a cache, and refusing
-    # to let the tool clear its own cache made detection terminal. The round-11
-    # count check appended to `problems`, so a stale rollup refused `forget`,
+    # to let the tool clear its own cache made detection terminal. The
+    # count check once appended to `problems`, so a stale rollup refused `forget`,
     # `forget --orphaned`, `roll` AND `put` -- every escape hatch behind the
     # gate the finding tripped, with hand-editing the spine file (which its
     # own header forbids) the only way out, and the day-close write broken
@@ -1034,7 +1033,7 @@ def load(write=True, tell=False):
         print("!! Writes are refused until it parses.")
         print()
         days = sorted(set(days))
-    # The two lists are returned APART. Merging them is the defect: round 12
+    # The two lists are returned APART. Merging them is the defect: an earlier fix
     # split them in this function's write gate and in cmd_read and left the
     # merge here, so cmd_due and cmd_missing kept treating a clearable cache
     # problem as a fatal one -- printing "any rollup written now would be
@@ -1074,7 +1073,7 @@ def save(days, rollups):
     # with "" and the file gained a blank line at EOF, which `git diff
     # --check` flags on every commit that touches it. Deleting that line by
     # hand does not hold (the next write puts it back, as it did on 38022e6);
-    # the fix belongs in the writer. (Codex, cross-model review, round 2.)
+    # the fix belongs in the writer.
     while out and not out[-1]:
         out.pop()
     # Atomic replace, never truncate-in-place: a crash or a concurrent reader
@@ -1248,7 +1247,7 @@ def journal_dates():
     real_date, not the shape regex: a mistyped filename like
     journal-2026-02-30.md otherwise sticks in `missing` forever, because both
     `draft` and `put` refuse it and no command clears it. The third date gate,
-    missed when round 8 unified the other two."""
+    missed when the other two were unified."""
     found, bad = set(), []
     for p in _day_files(journal_dir(), "journal-"):
         # The EXACT canonical name, not a date found anywhere in it.
@@ -1256,8 +1255,7 @@ def journal_dates():
         # that day, while journal_files() only opens `journal-<date>.md`, so
         # `missing` reported the spine current for a day `draft` and `put`
         # both refuse as having no journal. The two filename rules have to be
-        # one rule, the same way the two DATE gates were unified in round 8.
-        # (Codex, cross-model review, round 2.)
+        # one rule, the same way the two DATE gates were unified.
         stem = p.stem[len("journal-"):]
         if real_date(stem):
             # Gated on real_date: only a genuine day file pays for its own
@@ -1624,7 +1622,6 @@ def cmd_missing(args):
     # file's header states was never actually checked. Report it here rather
     # than refuse: the line may be real and its journal merely unarchived, so
     # naming it is the honest move and `put` still rewrites it.
-    # (Codex, cross-model review.)
     orphan_days = sorted(d for d, _ in days if d not in dates)
     if orphan_days:
         print("%d spine day(s) with NO journal file behind them:"
@@ -1808,7 +1805,7 @@ def cmd_roll(args):
     days, rollups = load()
     # UNION, not `or`. With `or`, a non-empty needed() excluded the entire
     # all_pending set, so `due --all` printed a roll command that roll itself
-    # refused: the same divergence round 6 closed for the due/roll pair,
+    # refused: the same divergence already closed for the due/roll pair,
     # reopened through --all, and a direct breach of the contract at the top of
     # this file that every printed command runs as printed.
     if args[0] in rollups:
@@ -1983,7 +1980,7 @@ def cmd_grep(args):
             print("!!   %s" % pr)
         print()
     hits = ["%s | %s" % d for d in days if pat.search("%s %s" % d)]
-    # v is (count, text) since round 11; every rollup used to print as a
+    # v is (count, text); every rollup used to print as a
     # Python repr here and an anchored search could never match. Ten call
     # sites were updated, this was the eleventh.
     hits += ["%s | %s" % (k, v.text) for k, v in sorted(rollups.items())
@@ -1996,7 +1993,7 @@ def cmd_grep(args):
         # `--` before the pattern: shlex.quote stops the SHELL splitting it,
         # not rg reading it as a flag, so a pattern starting with `-` printed
         # a command that exits 2 ("error parsing flag -d"). Every command this
-        # tool prints has to run as printed. (Codex, cross-model review.)
+        # tool prints has to run as printed.
         print("  rg -i -- %s %s"
               % (shlex.quote(args[0]), shlex.quote(str(journal_dir()))))
         return
@@ -2279,7 +2276,7 @@ def cmd_selftest(args):
     # Every emitted block must be a span `roll` can actually WRITE. all_pending
     # only enumerates aligned power-of-two runs, so a block outside that set is
     # a line the read prints and no rollup can ever fill: permanently stuck,
-    # with `due` correctly reporting nothing to do. The round-9 comment in
+    # with `due` correctly reporting nothing to do. The comment in
     # _cover guards the same class of bug from the other end. Splitting the
     # refill at `a + 1` instead of the midpoint emits 105 such blocks on this
     # grid, the first at T=24, and the only other check that notices is the
@@ -2497,16 +2494,15 @@ def cmd_selftest(args):
     # make it meaningful because it counted the wrong antecedent. Deleted
     # rather than tuned; the substitution probe below is the falsifiable
     # version of the same property and it does have a false case. Removing the
-    # shape ends the round. (Codex, r3.)
+    # shape ends the round.
     # That probe reaches its branch but can never falsify it: under pure
     # INSERTION, `span == count` implies no day landed between the endpoints,
     # which implies the set is unchanged. `blind == 0` is a tautology there,
     # and counting cases that merely survive orphaned() does not show
-    # otherwise -- 6,301 reached, 0 with a changed day set. The reachability
-    # assertion I added measured the wrong antecedent. The falsifiable
+    # otherwise -- 6,301 reached, 0 with a changed day set. A reachability
+    # assertion measures the wrong antecedent. The falsifiable
     # version is SUBSTITUTION, which a merge can produce and which the count
-    # cannot see; it is what day_digest exists for. (Codex, cross-model
-    # review, correcting my round-13 fix.)
+    # cannot see; it is what day_digest exists for.
     sub_blind = sub_reached = 0
     for N in range(4, 26):
         ds = days_of(N, step=8)
@@ -2581,7 +2577,7 @@ def cmd_selftest(args):
             break
     check(set(cov) <= chain, "one forget of the smallest span drops every coverer")
 
-    # Everything above is index arithmetic. The round-12 and round-13 findings
+    # Everything above is index arithmetic. Two later findings
     # were not: they were about WHICH problems gate which commands, and that
     # is only observable by running the commands. A claim needs an assertion
     # that literally tests it, so the routing gets real coverage rather than a
@@ -2813,7 +2809,7 @@ def cmd_selftest(args):
     # save(), which already drops the malformed line, so --orphaned then had
     # nothing to do and the "line is gone" assertion passed on the wrong
     # cause. Assert the line is present immediately before the command under
-    # test. (Codex, round 3.)
+    # test.
     td, jdir, spine_md = _mkroot(["this is a malformed rollup line"])
     try:
         before = "malformed rollup line" in spine_md.read_text(encoding="utf-8")
@@ -2990,7 +2986,7 @@ def cmd_selftest(args):
         # rather than raising, so the exact regression _paths() forbids was
         # invisible and the suite stayed 74/74 green. The name said "absent"
         # and the assertion tested "did not crash". Assert that the file is
-        # NOT read. (Mechanical review, round 1.)
+        # NOT read.
         (jdir / "archive").mkdir()
         (jdir / "archive" / "2026-03-04.md").write_text("# old",
                                                         encoding="utf-8")
@@ -3464,7 +3460,7 @@ def cmd_selftest(args):
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
-    # Same class again, through the SPINE path (MAJOR, not blocking: nothing
+    # Same class again, through the SPINE path (less severe: nothing
     # is destroyed here, the spine is derived). {"spine": "sub/SPINE.md"} with
     # "sub" a dangling symlink read as "the spine is empty" before this fix,
     # degrading every command silently rather than naming the break.

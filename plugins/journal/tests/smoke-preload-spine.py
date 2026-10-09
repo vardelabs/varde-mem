@@ -37,16 +37,15 @@ Covers, in order:
                              mid-sentence
  14. content sanitization -- banner/fence run-characters (incl. tildes) and
                              this block's own name are defanged in spine
-                             CONTENT, without growing its byte length (codex
-                             cross-model review, PR #1535)
+                             CONTENT, without growing its byte length
  15. sanitize-before-compress -- the compression decision runs on SANITIZED
                              length, not raw, so run-heavy content that
                              already fits once sanitized is never needlessly
-                             compressed (codex cross-model review, PR #1535)
+                             compressed
  16. e2e sanitize wiring  -- malicious spine output is sanitized through the
                              REAL hook (not just the function in isolation),
                              on both the first and compressed-second read
-                             paths (codex cross-model review, PR #1535)
+                             paths
  17. assemble_context clamp -- the shared cap is a hard clamp; the spine is
                              dropped WHOLESALE with an honest note, never mangled
  18. preload-body clamp   -- the emit path is capped too, ending on the note
@@ -172,8 +171,7 @@ def malicious_spine(days, budget_default):
     the sanitize call on that path too). Used to prove sanitization actually
     reaches `additionalContext` through the real hook, not just the function
     in isolation -- a regression that removed either call site would still
-    pass every direct `_sanitize_spine_content` assertion (codex cross-model
-    review, PR #1535, round 4).
+    pass every direct `_sanitize_spine_content` assertion.
 
     The `[BUDGETED_READ]` marker is embedded in the HEAD line (`_fit_spine`
     always keeps `lines[0]` regardless of trimming) specifically so a test can
@@ -181,8 +179,7 @@ def malicious_spine(days, budget_default):
     read happened from day-COUNT alone: a regression that skipped the second
     read entirely and let plain `_fit_spine` trimming reduce a large sanitized
     first-read result would ALSO show fewer than all days present, which is
-    indistinguishable from real compression by count alone (codex cross-model
-    review, PR #1535, round 6)."""
+    indistinguishable from real compression by count alone."""
     return (
         "#!/usr/bin/env python3\n"
         "import sys\n"
@@ -416,7 +413,7 @@ def main():
 
         # --- 3l. no install is not a fallback to $PATH -----------------------
         # The resolver must fail CLOSED. An earlier `git` version of this same
-        # helper fell back to a bare name on failure, which codex called out as
+        # helper fell back to a bare name on failure, which review called out as
         # reopening the hole it existed to close.
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
@@ -804,7 +801,7 @@ def main():
               "14 sanitize: an inline (non-line-initial) # is left alone")
 
         # CommonMark allows up to 3 spaces of indentation before an ATX
-        # heading; the round-7 fix was space-blind, so " # ..." and "   # ..."
+        # heading; an earlier fix was space-blind, so " # ..." and "   # ..."
         # both still rendered as an H1. A
         # 4th leading space makes it an indented CODE BLOCK, not a heading,
         # so that case must survive untouched -- the defense should not
@@ -1220,8 +1217,8 @@ def main():
     # non-existent path, which made the assertion vacuous: `SHGetKnownFolderPath`
     # verifies existence under KF_FLAG_DEFAULT, so the redirect it meant to
     # catch showed up as a failed call, and the check passed against a live
-    # vulnerability. Creating the decoy is what gives this teeth (PR #2300
-    # cross-model review, which reproduced the redirect).
+    # vulnerability. Creating the decoy is what gives this teeth; review
+    # reproduced the redirect this way.
     with tempfile.TemporaryDirectory() as decoy_root:
         decoy = Path(decoy_root) / "poisonhome"
         (decoy / "AppData" / "Local" / "Programs" / "vardemem").mkdir(parents=True)
