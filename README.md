@@ -75,7 +75,7 @@ VardeMem prints the text to compress and takes one line back; it does not summar
 
 ### `owed`
 
-The one definition of "this session owes the Journal a line", for every reminder that asks: a local session's prompt hook (the `journal` plugin's `remind-journal-owed`) and a cluster lane's PULSE tick. It makes no network call and no model call, and it keeps no state: each caller keeps its own cooldown and passes it back as `--since`.
+The one definition of "this session owes the Journal a line", for every reminder that asks: a local session's prompt hook (the `journal` plugin's `remind-journal-owed`) and a scheduled agent's periodic tick. It makes no network call and no model call, and it keeps no state: each caller keeps its own cooldown and passes it back as `--since`.
 
 ```json
 {"owed": true, "commits": 6, "last_journal": "2026-10-09T17:02:11+00:00", "reason": "6 commits since the last Journal write (threshold 5)"}
@@ -138,7 +138,7 @@ VardeMem tiles history with aligned power-of-two blocks whose detail thins with 
 | `vardemem.py` | The tool. Implementation plus `selftest`. |
 | `CONTRIBUTING.md` | Pre-PR checklist and the boundaries a change keeps. |
 
-Cluster CI runs two checks. `selftest` runs the property checks and the plugin smoke suites on pull requests; `no-journal-content` keeps real history out of the repo. The jobs live in `vardelabs/toolkits`; see `ci/README.md` there.
+CI runs two checks. `selftest` runs the property checks and the plugin smoke suites on pull requests; `no-journal-content` keeps real history out of the repo. The job definitions live outside this repo.
 
 ## Contributing
 

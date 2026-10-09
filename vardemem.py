@@ -2006,8 +2006,8 @@ def cmd_grep(args):
 # -------------------------------------------------------------------- owed
 
 # One definition of "this session owes the Journal a line", shared by every
-# reminder that asks: a local session's prompt hook and a cluster lane's PULSE
-# tick both call this, so the two can never disagree about when to nag. It is
+# reminder that asks: a local session's prompt hook and a scheduled agent's
+# periodic tick both call this, so the two can never disagree about when to nag. It is
 # stateless on purpose. Each caller keeps its own cooldown and passes the time
 # it last reminded as `--since`.
 OWED_THRESHOLD = 5
@@ -3112,7 +3112,7 @@ def cmd_selftest(args):
     # The warning names the RESOLVED journal, not the root. Only a symlinked
     # journal separates the two: everywhere else the root is a textual prefix
     # of the journal, so a substring check cannot tell the fix from the bug it
-    # replaced. (Mechanical lane found this unpinned.)
+    # replaced.
     td, jdir, spine_md = _mkroot([], ndays=0)
     away = Path(tempfile.mkdtemp(prefix="vardemem-away-"))
     elsewhere = Path(tempfile.mkdtemp(prefix="vardemem-other-"))
