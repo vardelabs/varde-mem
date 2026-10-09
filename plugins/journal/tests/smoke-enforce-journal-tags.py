@@ -5,8 +5,7 @@ harness-management monolith's enforce-daily-note-tags.py.
 Runs the hook as a subprocess against a throwaway $HOME and a real on-disk note, so the
 per-tenant config AND the before-document are both fully controlled.
 
-The hook was refuted five times and redesigned three times in review (PR #1312: three
-North rounds, six Codex rounds). EVERY finding from every round has a named regression
+EVERY finding from review has a named regression
 case below, built from the reviewer's own concrete input. The classes:
 
   - a Write that OVERWRITES a note holding legacy untagged entries must NOT deny
@@ -90,7 +89,7 @@ def check(name, cond):
 
 
 UNTAGGED = "**Shipped the thing.** It went out today."
-TAGGED = "[decision] **Shipped the thing.** Kai's call."
+TAGGED = "[decision] **Shipped the thing.** Sam's call."
 LEGACY = "**Legacy entry.** Written before the hook existed."
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -129,7 +128,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("unknown tag, NO space ([bogus]**X.**) -> DENY",
           run(w("[bogus]**Launch.** shipped today."), home)[0] is True)
 
-    # ---- REGRESSION: Write overwriting legacy untagged entries (North #1 / Codex #2) ----
+    # ---- REGRESSION: Write overwriting legacy untagged entries ----
     print("Write over an existing note with legacy untagged entries")
     note.write_text(f"# 2026-07-13\n\n## Session Log\n\n{LEGACY}\n", encoding="utf-8")
     check("same-content overwrite -> allow (no entry ADDED)",
@@ -146,7 +145,7 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w(f"{LEGACY}\n\n**Legacy entry.** A genuinely different, newly added one.\n"),
               home)[0] is True)
 
-    # ---- REGRESSION: non-entries misread as entries (North #2 / Codex #1) ----
+    # ---- REGRESSION: non-entries misread as entries ----
     print("non-entries are not entries")
     note.write_text("", encoding="utf-8")
     for label, content in [
@@ -160,11 +159,11 @@ with tempfile.TemporaryDirectory() as tmp:
     ]:
         check(f"{label} -> allow", run(w(content), home)[0] is False)
 
-    print("Edit fragment adding mid-paragraph emphasis (Codex #1)")
+    print("Edit fragment adding mid-paragraph emphasis")
     note.write_text("This is TOKEN text.\n", encoding="utf-8")
     check("emphasis edit inside prose -> allow", run(ed("**important**", "TOKEN"), home)[0] is False)
 
-    # ---- REGRESSION: old_string laundering (Codex #4 / North nit) ----
+    # ---- REGRESSION: old_string laundering ----
     print("old_string cannot launder a new untagged entry")
     note.write_text("Reference: **Launch.**\n", encoding="utf-8")
     check("inline bold in old_string does NOT exempt a new entry -> DENY",
@@ -189,7 +188,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # an edit whose old_string is a substring of a previous edit's new_string
     # ("old_string is a substring of a new_string from a previous edit"), so chaining
     # edits through text the first edit introduced would test a call the real tool
-    # refuses. Codex caught the earlier version of this test doing exactly that: it
+    # refuses. An earlier version of this test did exactly that: it
     # passed, but only proved the simulator accepts something the tool would not.
     note.write_text("# 2026-07-13\n\n## Session Log\n\n## Evening\n", encoding="utf-8")
     me = {"tool_name": "MultiEdit", "tool_input": {"file_path": NOTE, "edits": [
@@ -204,7 +203,7 @@ with tempfile.TemporaryDirectory() as tmp:
     ]}}
     check("MultiEdit where every added entry is tagged -> allow", run(me_ok, home)[0] is False)
 
-    # ---- path scoping (Codex #6) ----
+    # ---- path scoping ----
     print("path scoping")
     note.write_text("", encoding="utf-8")
     check("non-Daily-Note path untouched",
@@ -234,7 +233,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("legacy name in the NEW JOURNAL_DISABLED -> still denies (new var, new name only)",
           run(w(UNTAGGED), home, env={"JOURNAL_DISABLED": "enforce-daily-note-tags"})[0] is True)
 
-    # ---- config hardening (Codex #8) ----
+    # ---- config hardening ----
     print("config hardening")
     write_cfg(home, {"enabled": True, "tags": ["call", "chore"]})
     check("custom tag list honored (allow)", run(w("[call] **Thing.** Body."), home)[0] is False)
@@ -298,7 +297,7 @@ with tempfile.TemporaryDirectory() as tmp:
           run(me2, home)[0] is True)
 
     # ---- round-3 review: the multiset had a THIRD bug, so identity is now whole-line ----
-    print("round 3: net-count cancellation (Codex r3 #4)")
+    print("net-count cancellation")
     write_cfg(home, {"enabled": True})
     note.write_text("**Legacy.** old\n", encoding="utf-8")
     check("retro-tag one occurrence WHILE adding an untagged twin -> DENY (was a bypass)",
@@ -307,7 +306,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("title-normalization collision cannot launder either -> DENY",
           run(ed("[ops] **A   B.** old\n\n**A B.** NEW", "**A   B.** old"), home)[0] is True)
 
-    print("round 3: markdown state machine")
+    print("markdown state machine")
     note.write_text("", encoding="utf-8")
     check("fence inside an HTML comment does not desync the scanners -> DENY (was a bypass)",
           run(w("<!--\n```\n-->\n```\n```\n\n**New.** body\n```\n"), home)[0] is True)
@@ -318,11 +317,11 @@ with tempfile.TemporaryDirectory() as tmp:
     check("table delimiter across a blank line is not a table -> allow (pipe rule)",
           run(w("**New.** body | value\n\n--- | ---\n"), home)[0] is False)
 
-    print("round 3: pathological fence document cannot hang (was quadratic, 15s at 10k lines)")
+    print("pathological fence document cannot hang (was quadratic, 15s at 10k lines)")
     r, _ = run(w("```x\n" * 6000), home, timeout=5)
     check("6000 unpaired fence-like lines parse without hanging", r != "HANG")
 
-    print("round 3: MultiEdit chaining a prior edit's output is refused")
+    print("MultiEdit chaining a prior edit's output is refused")
     note.write_text("A\n", encoding="utf-8")
     me_bad = {"tool_name": "MultiEdit", "tool_input": {"file_path": NOTE, "edits": [
         {"old_string": "A", "new_string": "A\nX"},
@@ -331,7 +330,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("old_string from a prior edit's new_string -> allow (the tool rejects this call)",
           run(me_bad, home)[0] is False)
 
-    print("round 3 (North nit 3): column-0 bold sub-points inside one entry")
+    print("column-0 bold sub-points inside one entry")
     note.write_text("", encoding="utf-8")
     check("sub-points under a tagged entry are not separate entries -> allow (was a false deny)",
           run(w("[ops] **Ran the migration.** Steps:\n"
@@ -345,14 +344,14 @@ with tempfile.TemporaryDirectory() as tmp:
     # killing the sub-point false deny above.
     check("entry jammed directly under prose is not gated (accepted bypass)",
           run(w("Some prose line.\n" + UNTAGGED), home)[0] is False)
-    # Codex r4 #1. A BLANK-SEPARATED bold sub-point is positionally identical to an entry;
+    # A BLANK-SEPARATED bold sub-point is positionally identical to an entry;
     # no signal distinguishes them, so it is gated. Documented in the USER-GUIDE as the
     # limit of the block-start rule rather than papered over.
     check("blank-separated bold sub-point IS an entry -> DENY (grammar, documented)",
           run(w("[ops] **Investigated the outage.** Findings:\n\n"
                 "**Root cause.** A stale cache entry.\n"), home)[0] is True)
 
-    print("round 6: CommonMark delimiter validity (Codex r6 #1)")
+    print("CommonMark delimiter validity")
     write_cfg(home, {"enabled": True})
     note.write_text("", encoding="utf-8")
     check("'** not bold**' cannot OPEN emphasis, so it is not an entry -> allow",
@@ -361,14 +360,14 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w("**title ** ordinary prose"), home)[0] is False)
     check("valid bold is still an entry -> DENY", run(w("**Title.** prose"), home)[0] is True)
 
-    print("round 6: CommonMark separators are space/tab, not any unicode space (r6 #2)")
+    print("CommonMark separators are space/tab, not any unicode space (r6 #2)")
     check("NBSP after '#' is NOT a heading, so the line below is not a block start -> allow",
-          run(w("#\u00a0launch\n**Owner.** Kai will coordinate.\n"), home)[0] is False)
+          run(w("#\u00a0launch\n**Owner.** Sam will coordinate.\n"), home)[0] is False)
     check("NBSP-suffixed fence line does NOT close the fence -> allow",
           run(w("```text\ncode\n```\u00a0\n**Literal.** still inside the fence\n"),
               home)[0] is False)
 
-    print("round 6: inline CODE SPAN is literal, not raw HTML (r6 #6)")
+    print("inline CODE SPAN is literal, not raw HTML (r6 #6)")
     check("documenting `<!--` in inline code does not swallow the note -> DENY",
           run(w("Syntax reminder: type `<!--` to open a comment.\n\n**Shipped.** body\n"),
               home)[0] is True)
@@ -376,12 +375,12 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w("Syntax reminder: type `<pre>` to open a pre block.\n\n**Shipped.** body\n"),
               home)[0] is True)
 
-    print("round 6: duplicate-occurrence contract (r6 #4)")
+    print("duplicate-occurrence contract (r6 #4)")
     note.write_text("**Repeated.** Same body.\n", encoding="utf-8")
     check("adding a SECOND copy of an existing untagged entry -> DENY (occurrence-counted)",
           run(w("**Repeated.** Same body.\n\n**Repeated.** Same body.\n"), home)[0] is True)
 
-    print("round 6: whitespace-only edit is not a change (r6 #5)")
+    print("whitespace-only edit is not a change (r6 #5)")
     note.write_text("**Legacy.** body\n", encoding="utf-8")
     check("whitespace-only edit to an untagged entry -> allow (normalized identity)",
           run(ed("**Legacy.**  body", "**Legacy.** body"), home)[0] is False)
@@ -399,7 +398,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("6MB Write to an EMPTY note -> refused, not parsed; no hang", r is False)
     note.write_text("", encoding="utf-8")
 
-    print("round 5: inline markers are prose, not block boundaries (Codex r5 #1, #2)")
+    print("inline markers are prose, not block boundaries")
     write_cfg(home, {"enabled": True})
     note.write_text("", encoding="utf-8")
     check("inline <!-- --> in an entry does not fake a boundary -> allow (was a false deny)",
@@ -415,29 +414,29 @@ with tempfile.TemporaryDirectory() as tmp:
           run(w("**Documented syntax.** HTML literal output uses <pre>text</pre>.\n"),
               home)[0] is True)
 
-    print("round 5: context change must not flag an UNTOUCHED line (Codex r5 #3)")
-    note.write_text("Session notes\n**Owner.** Kai will coordinate.\n", encoding="utf-8")
+    print("context change must not flag an UNTOUCHED line")
+    note.write_text("Session notes\n**Owner.** Sam will coordinate.\n", encoding="utf-8")
     check("promoting a line to a heading does not flag the untouched entry below -> allow",
           run(ed("## Session notes", "Session notes"), home)[0] is False)
     note.write_text("```text\nsample\n**Legacy.** Existing line.\n", encoding="utf-8")
     check("closing a previously-unclosed fence does not flag the untouched line -> allow",
           run(ed("sample\n```\n", "sample\n"), home)[0] is False)
 
-    print("round 5: ATX heading recognition (Codex r5 #5)")
+    print("ATX heading recognition")
     note.write_text("", encoding="utf-8")
     check("'#launch' is prose, not a heading, so the next line is not an entry -> allow",
-          run(w("#launch\n**Owner.** Kai will coordinate.\n"), home)[0] is False)
+          run(w("#launch\n**Owner.** Sam will coordinate.\n"), home)[0] is False)
     check("a REAL heading still starts a block -> DENY",
-          run(w("# 2026-07-13\n**Owner.** Kai will coordinate.\n"), home)[0] is True)
+          run(w("# 2026-07-13\n**Owner.** Sam will coordinate.\n"), home)[0] is True)
 
-    print("round 5: an outsized MultiEdit cannot hang the hook (Codex r5 #4)")
+    print("an outsized MultiEdit cannot hang the hook")
     note.write_text("".join(f"x{i:05d}\n" for i in range(16000)), encoding="utf-8")
     big = {"tool_name": "MultiEdit", "tool_input": {"file_path": NOTE, "edits": [
         {"old_string": f"x{i:05d}", "new_string": f"y{i:05d}"} for i in range(16000)]}}
     r, _ = run(big, home, timeout=5)
     check("16000-edit MultiEdit -> refused, not replayed; no hang", r is False)
 
-    print("round 4: block boundaries (Codex r4 #4)")
+    print("block boundaries")
     note.write_text("", encoding="utf-8")
     check("entry right after a CLOSED fence is gated -> DENY (was an accidental bypass)",
           run(w("```text\noutput\n```\n**Recorded the result.** Successful.\n"), home)[0] is True)
@@ -447,12 +446,12 @@ with tempfile.TemporaryDirectory() as tmp:
     check("entry right after a closed <pre> is gated -> DENY",
           run(w("<pre>\nout\n</pre>\n**Recorded the result.** Successful.\n"), home)[0] is True)
 
-    print("round 4: raw <pre> is literal, not markdown (Codex r4 #2)")
+    print("raw <pre> is literal, not markdown")
     check("bold inside a <pre> block -> allow (was a false deny)",
           run(w("<pre>\n\n**Expected output.** literal text, not Markdown\n\n</pre>\n"),
               home)[0] is False)
 
-    print("round 4: the deny message must be true and actionable (Codex r4 #3)")
+    print("the deny message must be true and actionable")
     note.write_text("**Legacy entry.** Original body.\n", encoding="utf-8")
     d, reason = run(ed("Corrected body.", "Original body."), home)
     check("editing a legacy untagged entry -> DENY", d is True)
@@ -469,22 +468,22 @@ with tempfile.TemporaryDirectory() as tmp:
     write_cfg(home, {"enabled": True})
 
     # ---- round-2 review: order-dependence broke BOTH ways ----
-    print("round 2: untagged-only comparison is order-independent")
+    print("untagged-only comparison is order-independent")
     write_cfg(home, {"enabled": True})
 
-    # Codex r2 #1: inserting a TAGGED entry above a legacy untagged twin false-denied.
+    # Inserting a TAGGED entry above a legacy untagged twin false-denied.
     note.write_text("**Legacy.** old\n", encoding="utf-8")
     check("tagged dup inserted ABOVE a legacy untagged twin -> allow (was a false deny)",
           run(ed("[ops] **Legacy.** new tagged occurrence\n**Legacy.** old",
                  "**Legacy.** old"), home)[0] is False)
 
-    # Codex r2 #2 / North nit: the mirror image was a bypass.
+    # The mirror image was a bypass.
     note.write_text("[ops] **Sync.** old tagged occurrence\n", encoding="utf-8")
     check("untagged dup inserted ABOVE a tagged twin -> DENY (was a bypass)",
           run(ed("**Sync.** new untagged occurrence\n[ops] **Sync.** old tagged occurrence",
                  "[ops] **Sync.** old tagged occurrence"), home)[0] is True)
 
-    print("round 2: fence delimiter identity and length")
+    print("fence delimiter identity and length")
     note.write_text("", encoding="utf-8")
     check("``` inside a ```` block does NOT close it -> allow",
           run(w("````markdown\n```\n**Example.** this is code\n````\n"), home)[0] is False)
@@ -493,7 +492,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("4-space indented pseudo-fence is NOT a fence -> DENY the entry below it",
           run(w("    ```\n\n**Shipped.** untagged real entry\n"), home)[0] is True)
 
-    print("round 2: raw HTML and table context")
+    print("raw HTML and table context")
     check("bold inside an HTML comment -> allow",
           run(w("<!--\n**Example.** commented-out template\n-->\n"), home)[0] is False)
     # Conservative by design: ANY pipe-bearing line is left alone. Distinguishing a table
@@ -501,12 +500,12 @@ with tempfile.TemporaryDirectory() as tmp:
     # bypass is traded for the removal of a whole class of false deny. See the threat model.
     check("table HEADER row -> allow",
           run(w("**Name** | Value\n--- | ---\nfoo | bar\n"), home)[0] is False)
-    check("table BODY row with a bold first cell -> allow (Codex r3 #2 false deny)",
+    check("table BODY row with a bold first cell -> allow",
           run(w("Name | Value\n--- | ---\nAlice | one\n**Bob** | two\n"), home)[0] is False)
     check("pipe-bearing line is never gated (accepted bypass, documented)",
           run(w("**Shipped.** | released today\n"), home)[0] is False)
 
-    print("round 2: path resolution")
+    print("path resolution")
     rules = home / "vault" / "Rules"
     rules.mkdir(parents=True, exist_ok=True)
     (rules / "foo.md").write_text("", encoding="utf-8")
@@ -520,13 +519,13 @@ with tempfile.TemporaryDirectory() as tmp:
     check("a symlink INTO Daily Notes still gates -> DENY (was a bypass)",
           run(w(UNTAGGED, path=str(link / "linked.md")), home)[0] is True)
 
-    print("round 2: config strings are stripped on store")
+    print("config strings are stripped on store")
     write_cfg(home, {"enabled": True, "tags": [" ops "]})
     note.write_text("", encoding="utf-8")
     check("tags:[' ops '] -> '[ops]' is accepted (was a false deny)",
           run(w("[ops] **Routine work.** completed"), home)[0] is False)
 
-    print("round 2: a FIFO note cannot hang the hook")
+    print("a FIFO note cannot hang the hook")
     write_cfg(home, {"enabled": True})
     fifo = vault / "fifo.md"
     try:
@@ -536,7 +535,7 @@ with tempfile.TemporaryDirectory() as tmp:
     except (AttributeError, OSError):
         print("  SKIP  FIFO test (mkfifo unavailable on this platform)")
 
-    # ---- ReDoS is structurally impossible now (Codex #3) ----
+    # ---- ReDoS is structurally impossible now ----
     print("no user regex -> no ReDoS")
     write_cfg(home, {"enabled": True, "daily_notes_dirs": ["^(a+)+$"]})
     r, _ = run(w("plain", path="/" + "a" * 40 + "!/x.md"), home, timeout=5)

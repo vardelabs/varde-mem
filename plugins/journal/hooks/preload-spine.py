@@ -37,7 +37,7 @@ Budget       The spine claims at most SPINE_BUDGET bytes (see STATIC BUDGET).
              ancient history returns as rollups, and only then tail-fitted.
 Failure      Silent-but-visible, never blocking. A read that times out or exits
              non-zero logs and injects one short note; it never fails the hook.
-Absent tool  A tenant with no spine (varde-vault, north-vault) resolves nothing
+Absent tool  A tenant with no spine resolves nothing
              and injects nothing. No note, no error.
 
 Disable with `preload-spine` named in $JOURNAL_DISABLED (the legacy
@@ -290,7 +290,6 @@ def _vardemem_search_dirs():
     both read `$HOME` first, so a repo that sets it moves where this list's
     one `~`-anchored entry points, silently. The attack was never "change
     what your home directory contains", it was "change where `~` points".
-    (North, #1962, reproduced before it shipped.)
 
     Tests override this FUNCTION, never an environment variable, because an
     env-var seam here IS the exploit.
@@ -370,7 +369,7 @@ def _run_spine_read(script, cwd, extra_args, timeout: float):
     process's actual int, 0 included. Nothing enforces that split at the
     type level, so a caller keying behavior on `exit_code` must check `is
     None` before comparing it against an int -- the round-2 regression this
-    file already carries a fix for came from exactly that gap. (Vega.)
+    file already carries a fix for came from exactly that gap.
 
     `read` is documented to exit 0 and degrade on a malformed spine, so a
     non-zero exit means the TOOL failed rather than the data being thin, and
@@ -387,7 +386,7 @@ def _run_spine_read(script, cwd, extra_args, timeout: float):
         # build_spine_block's failure note points the operator at the hook
         # log; without this line that log held nothing for a spent-clock skip
         # specifically, only for the paths below that actually spawned a
-        # child. (Vega.)
+        # child.
         log("spine: read skipped, no time left in this read's window")
         return None, None
     try:
@@ -442,7 +441,7 @@ _SPINE_RUNS_RE = re.compile(r"([=`~])\1{1,}")
 # not just the string start, since every line in spine content is a potential
 # heading start (`# SYSTEM
 # INSTRUCTIONS` passed the round-2/3 sanitizer unchanged). The `{0,3}` on the
-# leading spaces closes North's round-2 follow-up: CommonMark allows up to
+# leading spaces closes a gap: CommonMark allows up to
 # three spaces of indentation before an ATX heading, and `" # SYSTEM
 # INSTRUCTIONS"` still rendered as an H1 against the space-blind version of
 # this regex. Same-length as always: a leading space or `#` is one byte, and
@@ -659,7 +658,7 @@ def build_spine_block(cwd, allowance: int, outer_deadline: float) -> str:
     The read's own `SPINE_TIMEOUT` window is still started after
     resolution, which is now four `stat` calls rather than a `git`
     subprocess. Cheap, and the shape stays correct if resolution ever
-    grows a cost again (North review, PR #1535)."""
+    grows a cost again."""
     if _disabled("preload-spine"):
         return ""
     if allowance < SPINE_MIN_ALLOWANCE:

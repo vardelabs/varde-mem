@@ -6,7 +6,7 @@ Runs the SessionStart hook as a subprocess against throwaway trees, with a STUB
 hook's behaviour and none of them depends on a real journal's content.
 
 The stub honours `--budget N` the way the real tool does (fewer, denser lines),
-which is what lets the compression pass be exercised without corvus-vault.
+which is what lets the compression pass be exercised without a real vault.
 
 Covers, in order:
   1. injected at all      -- content in context, from an INSTALLED command
@@ -15,10 +15,8 @@ Covers, in order:
   3l. no install          -- FAILS CLOSED, never falls back to a $PATH search
   3m. $HOME               -- cannot move where the tool is resolved from, since
                              an untrusted repo sets it as easily as $PATH
-                             (North review, #1962)
   3n. silence's key       -- keyed on the TOOL's exit code, not on a stat of
                              $AGENT_VAULT, a tree the tool may never consult
-                             (North review, #1962)
   4. absent tool          -- a tenant with no spine is a clean no-op, not an error
   5. read failure         -- a non-zero exit that is NOT the no-journal code
                              degrades to one visible note, exit 0, handoff still
@@ -31,12 +29,12 @@ Covers, in order:
   9. disable switch       -- `preload-spine` in $JOURNAL_DISABLED (or the legacy
                              $HARNESS_MANAGEMENT_DISABLED)
  10. _fit_spine hard clamp -- an oversized HEAD line alone cannot push the
-                             return past `allowance` (North review, PR #1535)
+                             return past `allowance`
  11. read timeout         -- a read that times out gets the visible note
  12. injection guard      -- the header treats its own content as data, not
-                             instructions (North review, PR #1535)
+                             instructions
  13. pointer degrade      -- an unfittable pointer is DROPPED, never truncated
-                             mid-sentence (codex cross-model review, PR #1535)
+                             mid-sentence
  14. content sanitization -- banner/fence run-characters (incl. tildes) and
                              this block's own name are defanged in spine
                              CONTENT, without growing its byte length (codex
@@ -56,9 +54,9 @@ Covers, in order:
                              no room, and says so verbatim
  20. emit() clamp         -- a spineless overrun still ends on an honest note
  21. exit-0 stderr        -- a read that exits 0 still gets its stderr logged,
-                             not silently dropped (North review, #1962 round 3)
+                             not silently dropped
  22. child interp safety  -- a python3 shadowed on $PATH is never run as the
-                             child vardemem's interpreter (North, #1962)
+                             child vardemem's interpreter
  23. top-level fail-open  -- a main() crash surfaces one (fail-open, #1383)
                              stderr note and still exits 0, not a silent
                              swallow (#2125)
@@ -232,7 +230,7 @@ def make_vault(root: Path, cache="in-flight state here"):
     #161 the hook runs an installed command, so the tool comes from
     `make_home` and the vault is only what the session sits in."""
     (root / CACHE_REL).mkdir(parents=True, exist_ok=True)
-    (root / CACHE_REL / "kai.md").write_text(cache, encoding="utf-8")
+    (root / CACHE_REL / "example-operator.md").write_text(cache, encoding="utf-8")
     # The config is what tells the hook this tree HAS a journal, which is what
     # separates "a tenant with no spine" (silence) from "the spine failed to
     # read" (a visible note). A fixture without it is the no-op case.
@@ -261,7 +259,7 @@ _OVERRIDE_RUNNER = (
 )
 
 
-def run_hook(cwd, vault=None, slug="kai", disabled="preload-live-github", event="SessionStart",
+def run_hook(cwd, vault=None, slug="example-operator", disabled="preload-live-github", event="SessionStart",
              extra_path=None, env_overrides=None, home=None, journal_disabled=""):
     """Run the hook and return (returncode, additionalContext). The live-GitHub
     phase is disabled by default: it is another module's behaviour, and leaving it
@@ -474,7 +472,7 @@ def main():
                   "3n and the tool's own no-journal exit is still silent")
 
         # --- 4. absent tool: a tenant with no spine is a clean no-op ----------
-        # varde-vault and north-vault have none. Nothing to say, so say nothing.
+        # A tenant vault with no journal has none. Nothing to say, so say nothing.
         bare = make_vault(tmp / "novault")
         bare_home = make_home(tmp / "novault-home", install=False)
         rc, ctx = run_hook(cwd=bare, vault=bare, home=bare_home)
@@ -536,7 +534,7 @@ def main():
                            home=make_home(tmp / "noslug-home"))
         check(rc == 0 and SPINE_MARK in ctx,
               "8 no slug: the spine is injected anyway")
-        os.remove(noslug / CACHE_REL / "kai.md")
+        os.remove(noslug / CACHE_REL / "example-operator.md")
         rc, ctx = run_hook(cwd=noslug, vault=noslug,
                            home=make_home(tmp / "noslug-home2"))
         check(SPINE_MARK in ctx and "No handoff found" not in ctx,
@@ -1071,7 +1069,7 @@ def main():
                   "21 and its stderr is logged rather than silently dropped")
 
         # --- 22. a poisoned $PATH does not get a SECOND shot at the CHILD's ---
-        # interpreter (Vega review; scope corrected, North round 5) ------------
+        # interpreter ------------
         # 3k/3l already prove resolve_vardemem never falls back to a bare-name
         # PATH lookup for the BINARY. This is the door one hop past that: the
         # real, correctly-resolved vardemem is a `#!/usr/bin/env python3`

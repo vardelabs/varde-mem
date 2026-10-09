@@ -52,7 +52,7 @@ installed, securely-resolved module both hooks import from a fixed trusted path.
 
 Denies a write that **adds** an untagged entry to a Daily Note (a bold
 lead-in at column 0 followed by prose, e.g. `[decision] **Retired the charter
-model.** Kai's call.`). It diffs the before- and after-documents rather than
+model.** Sam's call.`). It diffs the before- and after-documents rather than
 the raw tool input, so overwriting or appending to a note full of legacy
 untagged entries is never blocked; only an entry the write genuinely adds or
 edits is gated. Moved and renamed from the monolith's
