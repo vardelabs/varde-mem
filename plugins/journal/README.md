@@ -83,8 +83,8 @@ turn, at most once an hour. PreCompact ignores that cooldown and puts the same
 reminder into the compaction instructions, so the summary carries it.
 
 The session scope is the hook's: `--since` is the later of the session's
-first prompt and its last reminder, `--repo` is the session cwd plus
-`$AGENT_VAULT`, and `--surface` plus `--journal-surface` are
+first prompt and its last reminder, `--repo` is the session cwd (when it is
+in a git repo) plus `$AGENT_VAULT`, and `--surface` plus `--journal-surface` are
 `$WRITER_SURFACE` when set. The decision itself is `vardemem owed`, the same
 check the PULSE reminder calls, so the two cannot drift. State is one small
 file per session under `~/.local/state/journal/`. On by default once the
