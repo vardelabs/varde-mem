@@ -102,6 +102,15 @@ def main():
         check(fire(spine, root, "UserPromptSubmit", T + 190 + hook.COOLDOWN_S) == "",
               "after a reminder, only newer work counts")
 
+        plain = tmp / "plain"
+        plain.mkdir()
+        check("Journal is owed" in fire(spine, plain, "PreCompact", t0, session="s4"),
+              "a session outside any repo still counts its vault commits")
+        real = hook._spine_module()
+        check(all(callable(getattr(real, n, None)) for n in
+                  ("trusted_home", "log", "resolve_vardemem", "_disabled")),
+              "the real preload-spine module exposes what the hook calls")
+
         check(fire(spine, root, "UserPromptSubmit", t0, session="../x") == "",
               "a session id that is not a plain token is silent")
         broken = types.SimpleNamespace(**vars(spine))

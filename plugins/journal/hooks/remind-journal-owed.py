@@ -78,10 +78,19 @@ def _save(path, state):
         pass
 
 
+def _in_git_repo(path):
+    """`owed` fails the whole check on a path that is not a repo, and a
+    session started in a plain directory still commits to the vault."""
+    p = Path(path)
+    return any((d / ".git").exists() for d in (p, *p.parents))
+
+
 def _ask_owed(script, cwd, since):
     # --uncommitted: a local session's own unpushed Journal edit is its write.
     args = [sys.executable, script, "owed", "--since", "@%d" % since,
-            "--repo", cwd, "--uncommitted"]
+            "--uncommitted"]
+    if _in_git_repo(cwd):
+        args += ["--repo", cwd]
     vault = os.environ.get("AGENT_VAULT", "").strip()
     if vault:
         args += ["--repo", vault]
