@@ -1785,7 +1785,7 @@ def cmd_due(args):
         # `roll ...` command underneath it breaks the contract at the top of
         # this file that every printed command runs as printed.
         # A rollup problem must NOT reach here: writes are genuinely allowed
-        # in that state, and gating on it stopped the queue dead. (r13.)
+        # in that state, and gating on it stopped the queue dead.
         print("Fix %s first; any rollup written now would be refused."
               % spine_path().name)
         return

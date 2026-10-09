@@ -250,8 +250,7 @@ def _windows_search_dirs(profile):
     Split out from the platform branch so it runs on ANY host: the merge gate
     runs on Linux, where an `os.name == "nt"` body executes zero times, and
     for a `.ci-relaxed` plugin the test suite is the only gate there is. A
-    reordering or a typo in here would otherwise merge green forever
-    (PR #2300 review)."""
+    reordering or a typo in here would otherwise merge green forever."""
     return (os.path.join(profile, "AppData", "Local", "Programs", "vardemem"),
             # Mirrors the POSIX `~/.local/bin` entry: Git Bash users on this
             # platform create and use it by habit.
