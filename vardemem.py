@@ -47,13 +47,13 @@ import collections
 import datetime
 import hashlib
 import json
+import math
 import os
 import re
 import shlex
 import signal
 import stat as _stat
 import subprocess
-import time
 import sys
 try:
     import fcntl
@@ -2052,9 +2052,11 @@ def _git(cwd, *args):
 def _parse_since(raw):
     """`@<epoch>` (git's own spelling) or ISO 8601. A naive ISO time is local,
     the way `date` prints it."""
-    if raw.startswith("@"):
-        return float(raw[1:])
-    return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+    t = (float(raw[1:]) if raw.startswith("@") else
+         datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp())
+    if not math.isfinite(t):
+        raise ValueError("--since must be a finite time, not %s" % raw)
+    return t
 
 
 def _last_journal_commit(jdir, journal_surface):
@@ -2073,9 +2075,23 @@ def _last_journal_commit(jdir, journal_surface):
     return None
 
 
-def _journal_rel(jdir):
-    top = Path(_git(jdir, "rev-parse", "--show-toplevel").strip())
-    return os.path.relpath(jdir.resolve(), top.resolve())
+def _journal_top(jdir):
+    return Path(_git(jdir, "rev-parse", "--show-toplevel").strip()).resolve()
+
+
+def _last_uncommitted_edit(jdir, top):
+    """Newest mtime among the journal's dirty files, or None. Their own
+    mtimes, not the time of asking: a file left dirty by an earlier session
+    must not pay this one's debt. A pull never leaves a file dirty, so this
+    mtime is a real edit."""
+    out = _git(jdir, "status", "--porcelain", "-z", "--untracked-files=all",
+               "--", ".")
+    stamps = []
+    for entry in out.split("\0"):
+        path = top / entry[3:]
+        if len(entry) > 3 and path.is_file():
+            stamps.append(path.stat().st_mtime)
+    return max(stamps, default=None)
 
 
 def _counts(paths, surfaces, surface, jrel):
@@ -2111,7 +2127,13 @@ def _work_shas(repo, cutoff, surface, jrel):
     """Shas of the work commits on `repo`'s HEAD after `cutoff`. HEAD, never
     --all: a lane passes its own worktree and must not count a sibling's
     branch. The `--since` is a coarse prefilter; the exact cut is the
-    timestamp test, since git rounds it."""
+    timestamp test, since git rounds it. A repo with no commits yet has no
+    work; a path that is not a repo is still an error."""
+    try:
+        _git(repo, "rev-parse", "--verify", "-q", "HEAD")
+    except OSError:
+        _git(repo, "rev-parse", "--git-dir")
+        return set()
     out = _git(repo, "log", "--no-merges", "--name-only",
                "--since=@%d" % int(cutoff),
                "--format=%x1e%H%x1f%ct%x1f"
@@ -2160,13 +2182,15 @@ def _owed(args):
     jdir = journal_dir()
     if not _dir_state(jdir)[0]:
         raise OSError("no journal at %s" % jdir)
-    jrel = _journal_rel(jdir)
+    top = _journal_top(jdir)
+    jrel = os.path.relpath(jdir.resolve(), top)
     last = _last_journal_commit(jdir, opts["journal_surface"])
     # Opt-in, for a local session whose own uncommitted edit is the write it
     # just made. A shared host leaves it off: another lane's half-written
     # line is not this lane's.
-    if opts["uncommitted"] and _git(jdir, "status", "--porcelain", "--", ".").strip():
-        last = time.time()
+    if opts["uncommitted"]:
+        edits = [t for t in (last, _last_uncommitted_edit(jdir, top)) if t]
+        last = max(edits, default=None)
     cutoff = max(t for t in (last, opts["since"], 0) if t is not None)
     shas = set()
     for repo in opts["repos"] or [jdir]:
@@ -2191,7 +2215,7 @@ def cmd_owed(args):
         # untrusted root); the caller only needs the verdict.
         result = {"owed": False, "commits": 0, "last_journal": None,
                   "reason": "error", "error": "journal not resolvable"}
-    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+    except (OSError, ValueError, ArithmeticError, subprocess.TimeoutExpired) as e:
         result = {"owed": False, "commits": 0, "last_journal": None,
                   "reason": "error", "error": str(e)}
     print(json.dumps(result))
@@ -3972,10 +3996,23 @@ def _selftest_owed(check):
         _, v = owed("--threshold", "1")
         check(v.get("commits") == 3,
               "an uncommitted journal edit is not a write by default")
+        stale = root / "log" / "journal-1.md"
+        os.utime(stale, (clock[0] - 3600,) * 2)
+        _, v = owed("--threshold", "1", "--uncommitted")
+        check(v.get("commits") == 3,
+              "--uncommitted ignores a dirty file older than the work")
+        os.utime(stale, (clock[0] + 60,) * 2)
         _, v = owed("--threshold", "1", "--uncommitted")
         check(v.get("owed") is False and v.get("commits") == 0,
-              "--uncommitted counts a dirty journal as a write")
+              "--uncommitted counts a dirty journal edited after the work")
+        empty = root / "empty"
+        subprocess.run(["git", "init", "-q", str(empty)], check=True, env=env)
+        _, v = owed("--repo", str(root), "--repo", str(empty))
+        check("error" not in v and v.get("commits") == 3,
+              "a repo with no commits adds no work and fails nothing")
         for bad, label in ((("--bogus", "1"), "a bad flag"),
+                           (("--since", "@inf"), "a non-finite --since"),
+                           (("--since", "@1e400"), "an overflowing --since"),
                            (("--repo", str(root / "missing")), "a missing repo")):
             rc, v = owed(*bad)
             check(rc == 0 and v.get("owed") is False and "error" in v,

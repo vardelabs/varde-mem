@@ -86,7 +86,7 @@ def _in_git_repo(path):
 
 
 def _ask_owed(script, cwd, since):
-    # --uncommitted: a local session's own unpushed Journal edit is its write.
+    # --uncommitted: a local session's own uncommitted Journal edit is its write.
     args = [sys.executable, script, "owed", "--since", "@%d" % since,
             "--uncommitted"]
     if _in_git_repo(cwd):
