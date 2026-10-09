@@ -78,13 +78,13 @@ VardeMem prints the text to compress and takes one line back; it does not summar
 The one definition of "this session owes the Journal a line", for every reminder that asks: a local session's prompt hook (the `journal` plugin's `remind-journal-owed`) and a cluster lane's PULSE tick. It makes no network call and no model call, and it keeps no state: each caller keeps its own cooldown and passes it back as `--since`.
 
 ```json
-{"owed": true, "commits": 4, "last_journal": "2026-10-09T17:02:11+00:00", "reason": "4 commits since the last Journal write (threshold 3)"}
+{"owed": true, "commits": 6, "last_journal": "2026-10-09T17:02:11+00:00", "reason": "6 commits since the last Journal write (threshold 5)"}
 ```
 
 - **Last Journal write:** the committer time of the newest commit touching the journal directory. File mtimes never count, since a pull or a checkout resets them. `--journal-surface <slug>` counts only Journal commits whose `Writer-Surface:` trailer matches; `--uncommitted` also treats a dirty journal as written now, for a local session whose own edit is not committed yet.
 - **Cutoff:** the later of the last Journal write and `--since`.
 - **Work:** non-merge commits on each `--repo` HEAD after the cutoff (default: the journal's repo), counted once per sha. A commit touching only the journal is not work. `--surface <slug>` counts only commits with that trailer; every agent surface commits as one author, so an author filter cannot separate sessions. On a feature branch, commits reachable from `origin/HEAD` (or `origin/main`) are excluded, so a worktree does not count the default branch's history. A squash-merged branch's own commits stay unreachable from the default branch, so they still count if they are newer than the cutoff.
-- **Owed:** work commits reach `--threshold` (default 3).
+- **Owed:** work commits reach `--threshold` (default 5).
 - **Errors:** `owed` is `false` and an `error` key says why. A reminder that breaks goes quiet.
 
 ## Configuration

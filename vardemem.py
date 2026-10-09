@@ -2028,7 +2028,7 @@ def cmd_grep(args):
 # tick both call this, so the two can never disagree about when to nag. It is
 # stateless on purpose. Each caller keeps its own cooldown and passes the time
 # it last reminded as `--since`.
-OWED_THRESHOLD = 3
+OWED_THRESHOLD = 5
 
 # Same reason preload-spine resolves `vardemem` from fixed directories: a
 # session's PATH is set by whatever repo it opened, and this runs from hooks.
@@ -3921,40 +3921,44 @@ def _selftest_owed(check):
     try:
         git("init", "-q", "-b", "main")
         commit("log/journal-1.md")
-        for i in range(3):
+        for i in range(4):
             commit("w%d" % i)
         _, v = owed()
-        check(v.get("owed") is True and v.get("commits") == 3,
-              "three work commits after the last journal commit are owed")
+        check(v.get("owed") is False and v.get("commits") == 4,
+              "four work commits are under the default threshold of five")
+        commit("w4")
+        _, v = owed()
+        check(v.get("owed") is True and v.get("commits") == 5,
+              "five work commits after the last journal commit are owed")
         os.utime(root / "log" / "journal-1.md")
         _, v = owed()
-        check(v.get("commits") == 3,
+        check(v.get("commits") == 5,
               "a touched mtime (a pull, a checkout) is not a Journal write")
         commit("log/journal-1.md", surface="b")
-        commit("w3", surface="b")
+        commit("w5", surface="b")
         _, v = owed()
         check(v.get("commits") == 1,
               "a journal commit resets the count and is not itself work")
         _, v = owed("--journal-surface", "a")
-        check(v.get("commits") == 4,
+        check(v.get("commits") == 6,
               "--journal-surface ignores another surface's Journal commit")
         _, v = owed("--surface", "a")
         check(v.get("commits") == 0, "--surface counts only that trailer")
-        commit("w4")
+        commit("w6")
         _, v = owed("--since", "@%d" % (clock[0] - 30))
         check(v.get("commits") == 1, "--since moves the cutoff past older work")
         git("update-ref", "refs/remotes/origin/main", "HEAD")
         git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
         git("checkout", "-qb", "side")
-        commit("w5")
+        commit("s1")
         _, v = owed()
         check(v.get("commits") == 1,
               "on a feature branch, default-branch history is not counted")
         git("checkout", "-q", "main")
-        commit("w5")
+        commit("s1")
         git("update-ref", "refs/remotes/origin/main", "main")
         git("checkout", "-q", "side")
-        commit("w6")
+        commit("s2")
         _, v = owed()
         check(v.get("commits") == 2,
               "after a squash merge the branch's own commits still count: "

@@ -79,21 +79,21 @@ def main():
     try:
         git(root, "init", "-q")
         commit(root, "log/journal-1.md", T)
-        for i in range(3):
+        for i in range(5):
             commit(root, "before%d" % i, T + 10 + i)
         t0 = T + 100
         check(fire(spine, root, "UserPromptSubmit", t0) == "",
               "work from before the session's first prompt is not its debt")
 
-        for i in range(3):
+        for i in range(5):
             commit(root, "w%d" % i, T + 110 + i)
         out = fire(spine, root, "UserPromptSubmit", T + 140)
         ctx = json.loads(out or "{}").get("hookSpecificOutput", {})
         check(ctx.get("hookEventName") == "UserPromptSubmit"
-              and "3 commits" in ctx.get("additionalContext", ""),
-              "three commits in the session inject one reminder line")
+              and "5 commits" in ctx.get("additionalContext", ""),
+              "five commits in the session inject one reminder line")
 
-        for i in range(3, 6):
+        for i in range(5, 10):
             commit(root, "w%d" % i, T + 150 + i)
         check(fire(spine, root, "UserPromptSubmit", T + 180) == "",
               "the cooldown holds the next prompt silent")
