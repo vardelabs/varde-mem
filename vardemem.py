@@ -2100,6 +2100,8 @@ def _counts(paths, surfaces, surface, jrel):
     another session's work."""
     if surface and surface not in surfaces:
         return False
+    if jrel == ".":
+        return False  # a journal at the repo root owns every path
     if jrel and paths:
         return not all(p == jrel or p.startswith(jrel + "/") for p in paths)
     return True
@@ -2174,6 +2176,8 @@ def _owed_args(args):
         else:
             key, conv = OWED_FLAGS[flag]
             opts[key] = conv(val)
+    if opts["threshold"] < 1:
+        raise ValueError("--threshold must be 1 or more")
     return opts
 
 
@@ -3913,6 +3917,8 @@ def _selftest_owed(check):
     import shutil
     import tempfile
     print("owed (in a temp git vault, by subprocess):")
+    check(not _counts(["notes.md", "src/x.py"], set(), None, "."),
+          "a journal at the repo root makes every commit a journal commit")
     root = Path(tempfile.mkdtemp(prefix="vardemem-selftest-owed-"))
     (root / CONFIG_NAME).write_text('{"journal": "log"}', encoding="utf-8")
     (root / "log").mkdir()
@@ -4013,6 +4019,7 @@ def _selftest_owed(check):
         for bad, label in ((("--bogus", "1"), "a bad flag"),
                            (("--since", "@inf"), "a non-finite --since"),
                            (("--since", "@1e400"), "an overflowing --since"),
+                           (("--threshold", "0"), "a zero --threshold"),
                            (("--repo", str(root / "missing")), "a missing repo")):
             rc, v = owed(*bad)
             check(rc == 0 and v.get("owed") is False and "error" in v,
