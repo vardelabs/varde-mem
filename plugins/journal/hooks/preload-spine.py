@@ -459,7 +459,7 @@ _SPINE_RULE_RE = re.compile(r"([-*])\1{2,}")
 # `_SPINE_RULE_RE` leave open, `_` and spaced idioms neither covers, and a
 # setext heading needing only ONE trailing `=`/`-` (their collapse-to-first-
 # char produces exactly that trigger, so full-line-to-`.` replaces it here
-# instead). See QA/Tracker.md 2026-08-25.
+# instead).
 _SPINE_SETEXT_RULE_RE = re.compile(r"(?m)^[ \t]{0,3}([-_*=])(?:[ \t]*\1)*[ \t]*$")
 
 # A `>` starting a line (optional leading spaces, CommonMark allows up to 3):
