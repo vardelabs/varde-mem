@@ -74,6 +74,24 @@ budgets are unchanged from the reviewed hook. Disable via `$JOURNAL_DISABLED`
 (legacy `$HARNESS_MANAGEMENT_DISABLED` honored). Tests:
 `tests/smoke-preload-spine.py`.
 
+## `remind-journal-owed.py` (UserPromptSubmit + PreCompact)
+
+The PULSE Journal reminder for a session that has no PULSE loop, such as a
+local Mac session. It never blocks. When `vardemem owed` says this session's
+work has earned a Journal line, UserPromptSubmit adds one line to the next
+turn, at most once an hour. PreCompact ignores that cooldown and puts the same
+reminder into the compaction instructions, so the summary carries it.
+
+The session scope is the hook's: `--since` is the later of the session's
+first prompt and its last reminder, `--repo` is the session cwd plus
+`$AGENT_VAULT`, and `--surface` plus `--journal-surface` are
+`$WRITER_SURFACE` when set. The decision itself is `vardemem owed`, the same
+check the PULSE reminder calls, so the two cannot drift. State is one small
+file per session under `~/.local/state/journal/`. On by default once the
+plugin is enabled. A host whose lanes already get a PULSE reminder names
+`remind-journal-owed` in `$JOURNAL_DISABLED`. Tests:
+`tests/smoke-remind-journal-owed.py`.
+
 ## Disabling
 
 Name a hook in `$JOURNAL_DISABLED` (comma-separated) to turn it off for a

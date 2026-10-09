@@ -18,6 +18,10 @@ ancient ones collapse into a single line covering a month or a year.
   vardemem forget <a>..<b>     drop a bad rollup and everything built on it
   vardemem forget --orphaned   drop every rollup the day set outgrew, plus
                                any rollup line the parser rejected outright
+  vardemem owed [--since <iso|@epoch>] [--surface <slug>] [--repo <path>]...
+                [--journal-surface <slug>] [--threshold N] [--uncommitted]
+                               JSON: has work since the last Journal write
+                               earned a line? For reminder hooks; exits 0.
   vardemem selftest            property checks for the index arithmetic
 
 The spine is DERIVED. Every line comes from a journal file, the journals are
@@ -48,6 +52,8 @@ import re
 import shlex
 import signal
 import stat as _stat
+import subprocess
+import time
 import sys
 try:
     import fcntl
@@ -2015,6 +2021,182 @@ def cmd_grep(args):
           "open its journal." % len(hits))
 
 
+# -------------------------------------------------------------------- owed
+
+# One definition of "this session owes the Journal a line", shared by every
+# reminder that asks: a local session's prompt hook and a cluster lane's PULSE
+# tick both call this, so the two can never disagree about when to nag. It is
+# stateless on purpose. Each caller keeps its own cooldown and passes the time
+# it last reminded as `--since`.
+OWED_THRESHOLD = 3
+
+# Same reason preload-spine resolves `vardemem` from fixed directories: a
+# session's PATH is set by whatever repo it opened, and this runs from hooks.
+GIT_DIRS = ("/usr/bin", "/usr/local/bin", "/opt/homebrew/bin")
+GIT_TIMEOUT = 5
+
+
+def _git(cwd, *args):
+    git = next((p for p in (os.path.join(d, "git") for d in GIT_DIRS)
+                if os.access(p, os.X_OK)), None)
+    if git is None:
+        raise OSError("no git in %s" % ", ".join(GIT_DIRS))
+    r = subprocess.run([git, "-C", str(cwd), *args], capture_output=True,
+                       text=True, timeout=GIT_TIMEOUT)
+    if r.returncode != 0:
+        raise OSError(r.stderr.strip() or "git %s exited %d"
+                      % (args[0], r.returncode))
+    return r.stdout
+
+
+def _parse_since(raw):
+    """`@<epoch>` (git's own spelling) or ISO 8601. A naive ISO time is local,
+    the way `date` prints it."""
+    if raw.startswith("@"):
+        return float(raw[1:])
+    return datetime.datetime.fromisoformat(raw.replace("Z", "+00:00")).timestamp()
+
+
+def _last_journal_commit(jdir, journal_surface):
+    """Committer time of the newest commit touching the journal, or None.
+    Only a commit counts: a pull, a checkout, or a backfill resets file mtimes
+    without writing a line. `journal_surface` keeps another surface's Journal
+    commit from paying this one's debt."""
+    out = _git(jdir, "log", "--format=%ct%x1f"
+               "%(trailers:key=Writer-Surface,valueonly,separator=%x2C)",
+               "--", ".")
+    for line in out.splitlines():
+        ct, _, surf = line.partition("\x1f")
+        if not journal_surface or journal_surface in {
+                s.strip() for s in surf.split(",")}:
+            return float(ct)
+    return None
+
+
+def _journal_rel(jdir):
+    top = Path(_git(jdir, "rev-parse", "--show-toplevel").strip())
+    return os.path.relpath(jdir.resolve(), top.resolve())
+
+
+def _counts(paths, surfaces, surface, jrel):
+    """Whether one commit is session work. A commit that only touches the
+    journal is the payment, not more debt, and a commit by another surface is
+    another session's work."""
+    if surface and surface not in surfaces:
+        return False
+    if jrel and paths:
+        return not all(p == jrel or p.startswith(jrel + "/") for p in paths)
+    return True
+
+
+def _default_branch_exclusion(repo):
+    """`--not <remote default>` when `repo` is on a feature branch, else
+    nothing. A feature worktree's HEAD history also holds everyone's commits
+    that landed on the default branch before the branch point, and those are
+    not this session's work. On the default branch itself, plain HEAD is the
+    session's history."""
+    try:
+        upstream = _git(repo, "rev-parse", "--abbrev-ref", "origin/HEAD").strip()
+    except OSError:
+        upstream = "origin/main"
+    try:
+        _git(repo, "rev-parse", "--verify", "-q", upstream)
+        branch = _git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    except OSError:
+        return []
+    return [] if upstream.split("/", 1)[-1] == branch else ["--not", upstream]
+
+
+def _work_shas(repo, cutoff, surface, jrel):
+    """Shas of the work commits on `repo`'s HEAD after `cutoff`. HEAD, never
+    --all: a lane passes its own worktree and must not count a sibling's
+    branch. The `--since` is a coarse prefilter; the exact cut is the
+    timestamp test, since git rounds it."""
+    out = _git(repo, "log", "--no-merges", "--name-only",
+               "--since=@%d" % int(cutoff),
+               "--format=%x1e%H%x1f%ct%x1f"
+               "%(trailers:key=Writer-Surface,valueonly,separator=%x2C)",
+               "HEAD", *_default_branch_exclusion(repo))
+    shas = set()
+    for rec in out.split("\x1e")[1:]:
+        head, _, files = rec.partition("\n")
+        sha, ct, surf = head.split("\x1f")
+        surfaces = {s.strip() for s in surf.split(",") if s.strip()}
+        paths = [f for f in files.split("\n") if f]
+        if float(ct) > cutoff and _counts(paths, surfaces, surface, jrel):
+            shas.add(sha)
+    return shas
+
+
+OWED_USAGE = ("usage: %s owed [--since <iso|@epoch>] [--surface <slug>] "
+              "[--journal-surface <slug>] [--repo <path>]... [--threshold N] "
+              "[--uncommitted]" % ME)
+OWED_FLAGS = {"--since": ("since", _parse_since), "--surface": ("surface", str),
+              "--journal-surface": ("journal_surface", str),
+              "--threshold": ("threshold", int)}
+
+
+def _owed_args(args):
+    opts = {"since": None, "surface": None, "journal_surface": None,
+            "repos": [], "threshold": OWED_THRESHOLD, "uncommitted": False}
+    it = iter(args)
+    for flag in it:
+        if flag == "--uncommitted":
+            opts["uncommitted"] = True
+            continue
+        val = next(it, None)
+        if val is None or (flag not in OWED_FLAGS and flag != "--repo"):
+            raise ValueError(OWED_USAGE)
+        if flag == "--repo":
+            opts["repos"].append(val)
+        else:
+            key, conv = OWED_FLAGS[flag]
+            opts[key] = conv(val)
+    return opts
+
+
+def _owed(args):
+    opts = _owed_args(args)
+    jdir = journal_dir()
+    if not _dir_state(jdir)[0]:
+        raise OSError("no journal at %s" % jdir)
+    jrel = _journal_rel(jdir)
+    last = _last_journal_commit(jdir, opts["journal_surface"])
+    # Opt-in, for a local session whose own uncommitted edit is the write it
+    # just made. A shared host leaves it off: another lane's half-written
+    # line is not this lane's.
+    if opts["uncommitted"] and _git(jdir, "status", "--porcelain", "--", ".").strip():
+        last = time.time()
+    cutoff = max(t for t in (last, opts["since"], 0) if t is not None)
+    shas = set()
+    for repo in opts["repos"] or [jdir]:
+        shas |= _work_shas(repo, cutoff, opts["surface"], jrel)
+    n = len(shas)
+    stamp = (datetime.datetime.fromtimestamp(last, datetime.timezone.utc)
+             .isoformat(timespec="seconds") if last is not None else None)
+    return {"owed": n >= opts["threshold"], "commits": n, "last_journal": stamp,
+            "reason": "%d commit%s since the last Journal write (threshold %d)"
+                      % (n, "" if n == 1 else "s", opts["threshold"])}
+
+
+def cmd_owed(args):
+    """Whether work since the last Journal write has earned a Journal line.
+    Always exits 0 with JSON: its callers are reminders, and a reminder that
+    breaks must go quiet, never block. `owed` is false on any error, and
+    `error` says what went wrong."""
+    try:
+        result = _owed(args)
+    except SystemExit:
+        # die() already said why on stderr (no journal configured, an
+        # untrusted root); the caller only needs the verdict.
+        result = {"owed": False, "commits": 0, "last_journal": None,
+                  "reason": "error", "error": "journal not resolvable"}
+    except (OSError, ValueError, subprocess.TimeoutExpired) as e:
+        result = {"owed": False, "commits": 0, "last_journal": None,
+                  "reason": "error", "error": str(e)}
+    print(json.dumps(result))
+
+
 # ---------------------------------------------------------------- selftest
 
 def cmd_selftest(args):
@@ -3694,13 +3876,113 @@ def cmd_selftest(args):
     check(ready.strip() == "READY" and rc == 130,
           "Ctrl-C during a run exits 130, not a bare traceback")
 
+    _selftest_owed(check)
+
     print("\n%s" % ("ALL PASS" if not fails else "%d FAILED" % len(fails)))
     sys.exit(1 if fails else 0)
 
 
+def _selftest_owed(check):
+    """`owed` against a throwaway git vault. Commit times are pinned and the
+    journal's mtime is set behind them, so no assertion depends on how fast
+    this machine runs."""
+    import shutil
+    import tempfile
+    print("owed (in a temp git vault, by subprocess):")
+    root = Path(tempfile.mkdtemp(prefix="vardemem-selftest-owed-"))
+    (root / CONFIG_NAME).write_text('{"journal": "log"}', encoding="utf-8")
+    (root / "log").mkdir()
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+               GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
+               **{ROOT_ENV: str(root)})
+    env.pop(TRUST_FILE_ENV, None)
+    clock = [1_700_000_000]
+
+    def git(*argv, **extra):
+        subprocess.run(["git", "-C", str(root), *argv], check=True,
+                       env=dict(env, **extra))
+
+    def commit(path, surface="a"):
+        clock[0] += 60
+        (root / path).write_text(str(clock[0]), encoding="utf-8")
+        stamp = "@%d +0000" % clock[0]
+        git("add", "-A")
+        git("commit", "-qm", "c\n\nWriter-Surface: %s" % surface,
+            GIT_AUTHOR_DATE=stamp, GIT_COMMITTER_DATE=stamp)
+
+    def owed(*argv):
+        p = subprocess.run([sys.executable, __file__, "owed", *argv],
+                           capture_output=True, text=True, cwd=str(root), env=env)
+        try:
+            return p.returncode, json.loads(p.stdout)
+        except ValueError:
+            return p.returncode, {}
+
+    try:
+        git("init", "-q", "-b", "main")
+        commit("log/journal-1.md")
+        for i in range(3):
+            commit("w%d" % i)
+        _, v = owed()
+        check(v.get("owed") is True and v.get("commits") == 3,
+              "three work commits after the last journal commit are owed")
+        os.utime(root / "log" / "journal-1.md")
+        _, v = owed()
+        check(v.get("commits") == 3,
+              "a touched mtime (a pull, a checkout) is not a Journal write")
+        commit("log/journal-1.md", surface="b")
+        commit("w3", surface="b")
+        _, v = owed()
+        check(v.get("commits") == 1,
+              "a journal commit resets the count and is not itself work")
+        _, v = owed("--journal-surface", "a")
+        check(v.get("commits") == 4,
+              "--journal-surface ignores another surface's Journal commit")
+        _, v = owed("--surface", "a")
+        check(v.get("commits") == 0, "--surface counts only that trailer")
+        commit("w4")
+        _, v = owed("--since", "@%d" % (clock[0] - 30))
+        check(v.get("commits") == 1, "--since moves the cutoff past older work")
+        git("update-ref", "refs/remotes/origin/main", "HEAD")
+        git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        git("checkout", "-qb", "side")
+        commit("w5")
+        _, v = owed()
+        check(v.get("commits") == 1,
+              "on a feature branch, default-branch history is not counted")
+        git("checkout", "-q", "main")
+        commit("w5")
+        git("update-ref", "refs/remotes/origin/main", "main")
+        git("checkout", "-q", "side")
+        commit("w6")
+        _, v = owed()
+        check(v.get("commits") == 2,
+              "after a squash merge the branch's own commits still count: "
+              "squash leaves them unreachable from the default branch")
+        git("checkout", "-q", "main")
+        _, v = owed()
+        check(v.get("commits") == 3, "another branch's commit is not counted")
+        _, v = owed("--repo", str(root), "--repo", str(root))
+        check(v.get("commits") == 3, "a repo named twice counts each sha once")
+        (root / "log" / "journal-1.md").write_text("x", encoding="utf-8")
+        _, v = owed("--threshold", "1")
+        check(v.get("commits") == 3,
+              "an uncommitted journal edit is not a write by default")
+        _, v = owed("--threshold", "1", "--uncommitted")
+        check(v.get("owed") is False and v.get("commits") == 0,
+              "--uncommitted counts a dirty journal as a write")
+        for bad, label in ((("--bogus", "1"), "a bad flag"),
+                           (("--repo", str(root / "missing")), "a missing repo")):
+            rc, v = owed(*bad)
+            check(rc == 0 and v.get("owed") is False and "error" in v,
+                  "%s still exits 0 with owed false and an error" % label)
+    finally:
+        shutil.rmtree(root, ignore_errors=True)
+
+
 COMMANDS = {"read": cmd_read, "missing": cmd_missing, "draft": cmd_draft,
             "put": cmd_put, "due": cmd_due, "roll": cmd_roll,
-            "forget": cmd_forget, "grep": cmd_grep,
+            "forget": cmd_forget, "grep": cmd_grep, "owed": cmd_owed,
             "selftest": cmd_selftest}
 
 
@@ -3735,6 +4017,8 @@ def _run():
         sys.exit(1 if len(sys.argv) > 1 else 0)
     if sys.argv[1] == "selftest":
         return COMMANDS["selftest"](sys.argv[2:])   # reads no journal file
+    if sys.argv[1] == "owed":
+        return COMMANDS["owed"](sys.argv[2:])   # answers its own errors in JSON
     is_dir, unreachable = _dir_state(journal_dir())
     if unreachable is not None:
         # NOT the no-journal code. A journal that cannot be reached is a real
