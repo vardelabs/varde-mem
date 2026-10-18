@@ -41,7 +41,7 @@ def run(home: Path, file_path: str) -> str:
 
 
 def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
-    """Run with a RAW payload and optional RAW config (written to canonical);
+    """Run with a RAW payload and optional RAW config (written to the config path);
     return (returncode, stdout) without asserting, for fail-open cases."""
     env = dict(os.environ)
     env["HOME"] = str(home)
@@ -105,7 +105,7 @@ def main() -> int:
         # opt-in gate + trip-type match
         write_config(home)
         out = run(home, write_mem(home, "proj.md", "project"))
-        cases.append(("project trips with canonical config", '"additionalContext"' in out and "vault" in out))
+        cases.append(("project trips with the config", '"additionalContext"' in out and "vault" in out))
         out = run(home, write_mem(home, "ref.md", "reference"))
         cases.append(("reference stays silent", out == ""))
 
@@ -203,13 +203,13 @@ def main() -> int:
         cases.append(("trip_types key normalized (capitalized/padded key trips)",
                       rc == 0 and '"additionalContext"' in out and "vault" in out))
 
-        # an undecodable (invalid UTF-8) canonical config must fail open, not crash;
-        # it is present-authoritative-unusable, so the hook stays silent (no fallback).
+        # an undecodable (invalid UTF-8) config must fail open, not crash, and the
+        # hook stays silent.
         clear_configs(home)
         (home / CFG_DIR).mkdir(parents=True, exist_ok=True)
         (home / CFG_DIR / "memory-routing.json").write_bytes(b"\xff\xfe not utf8")
         out = run(home, write_mem(home, "badenc.md", "project"))
-        cases.append(("undecodable canonical config: fail-open, silent", out == ""))
+        cases.append(("undecodable config: fail-open, silent", out == ""))
         clear_configs(home)
 
         # memory_path_regex is a TRUE override: broadening advises on a non-default path...
