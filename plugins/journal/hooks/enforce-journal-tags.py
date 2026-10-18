@@ -7,7 +7,7 @@ same turn. An entry is a bold lead-in at column 0 followed by prose:
 
     [decision] **Retired the charter model.** Sam's call; issues are the hub now.
     [fix] **Corrected the stale PreCompact target.** It pointed at a dead script.
-    [architecture] **Folded handoff-protocol into harness-management.** One domain.
+    [architecture] **Folded the handoff protocol into one plugin.** One domain.
     [ops] **Ran the weekly board reconcile.** No surprises.
 
 Why a HARD BLOCK and not an advisory: daily-note tagging is a habit, not a
@@ -168,7 +168,7 @@ CONFIG_FILE = "journal-tags.json"
 # Config is disk-located, never derived from a spoofable $HOME: an absolute
 # $JOURNAL_CONFIG_DIR overrides, else <trusted home>/.config/journal. Resolved
 # LAZILY in load_config, not at import: this hook fires on every candidate write
-# and the home lookup is not free (see agent_home.config_path, #2310).
+# and the home lookup is not free (a passwd entry can be a network call).
 CONFIG_DIR_ENV = "JOURNAL_CONFIG_DIR"
 
 DEFAULT_TAGS = ("decision", "fix", "architecture", "ops")

@@ -339,7 +339,6 @@ leaked credential must be ROTATED, and a leaked identifier or person's name is p
 - The deterministic scanner is the only cheap gate; steps 3-5 are judgment and must
   be done by reading the actual files.
 - Routing targets follow the tenant's own vault layout. The companion
-  `enforce-memory-routing` hook reads `~/.config/memory-hygiene/memory-routing.json`
-  (canonical), falling back to `~/.config/harness-management/memory-routing.json`.
+  `enforce-memory-routing` hook reads `~/.config/memory-hygiene/memory-routing.json`.
   This scanner reads the same config for its `trip_types`, so scanner and hook agree
   on what is vault-bound.

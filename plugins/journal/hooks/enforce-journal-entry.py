@@ -150,9 +150,7 @@ CONFIG_FILE = "journal-entry.json"
 
 # Per-tenant config location. An absolute $JOURNAL_CONFIG_DIR overrides the
 # default so a tenant is not forced to write under the PASSWD home; else
-# <trusted home>/.config/journal. Resolved the way agent_home.config_path
-# resolves harness-management's, against this plugin's own dir, so config is
-# disk-located, never derived from a spoofable $HOME (see #2310).
+# <trusted home>/.config/journal, so config is disk-located, never derived from a spoofable $HOME (see #2310).
 CONFIG_DIR_ENV = "JOURNAL_CONFIG_DIR"
 STATE_DIR = Path.home() / ".local/state/journal"
 LOG_DIR = Path.home() / ".local/log"

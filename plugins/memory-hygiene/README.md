@@ -28,10 +28,7 @@ ends: a write-time reflex and a periodic cleanup.
 Both components share one opt-in per-tenant config. With no config the hook
 no-ops, so the pair is inert until a tenant turns it on.
 
-- **Canonical path:** `~/.config/memory-hygiene/memory-routing.json`.
-- **Legacy fallback:** `~/.config/harness-management/memory-routing.json`, read
-  only when the canonical path is absent (this pair lived in a `harness-management`
-  plugin before it moved here).
+- **Path:** `~/.config/memory-hygiene/memory-routing.json`.
 - **Example:** [`hooks/memory-routing.config.example.json`](hooks/memory-routing.config.example.json).
 
 ```json
@@ -51,10 +48,8 @@ optionally overrides the default auto-memory-path matcher. `$AGENT_VAULT` names 
 vault the advisory points at.
 
 The config is the only gate. With no usable config the hook no-ops; there is no
-separate env off-switch. To stop routing, set `enabled: false` in the canonical
-config: a present-but-disabled canonical config is authoritative and suppresses the
-legacy fallback. Deleting the canonical config stops routing only when no enabled
-config remains on the legacy fallback path either.
+separate env off-switch. To stop routing, set `enabled: false` in the config or
+delete it.
 
 ## Tests
 
@@ -66,15 +61,13 @@ python3 tests/smoke-snapshot.py
 
 The hook suite runs `enforce-memory-routing.py` against a throwaway `$HOME`: the
 opt-in gate, trip-type matching (bare, quoted, hyphenated, and inline-commented
-YAML values), the silent cases, the canonical/legacy config-path fallback, the
-`memory_path_regex` override, the null- and
-undecodable-canonical handling, filename sanitization in the advisory, Windows-path
+YAML values), the silent cases, the `memory_path_regex` override, the null and
+undecodable config handling, filename sanitization in the advisory, Windows-path
 parity, and the hot-path no-disk-write guarantee.
 
 The scanner suite runs `scan.py`: the bloat/healthy/missing-dir verdicts, that
 misroute detection is opt-in (no routing config, or `enabled: false`, means only
-bloat trips), and that a present-but-unreadable canonical config does not fall back
-to a stale legacy one.
+bloat trips), and that an unreadable config turns misroute detection off.
 
 The snapshot suite runs `snapshot.sh`: a normal snapshot mirrors the memory dir,
 two same-second passes get distinct non-nested dirs (no reliance on `date +%N`),

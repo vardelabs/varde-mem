@@ -39,10 +39,8 @@ import time
 from pathlib import Path
 
 STATE_FILE = Path.home() / ".local/state/memory-consolidation-scan.json"
-# Canonical config path; the pre-move path is kept as a fallback. Shared with the
-# enforce-memory-routing hook so scanner and hook agree on trip_types.
+# Shared with the enforce-memory-routing hook so scanner and hook agree on trip_types.
 CONFIG_FILE = Path.home() / ".config/memory-hygiene/memory-routing.json"
-LEGACY_CONFIG_FILE = Path.home() / ".config/harness-management/memory-routing.json"
 
 FILE_COUNT_TRIP = 18   # index bloat threshold (lean target is <= 15 files)
 BYTES_TRIP = 60_000    # whole-dir size threshold (lean target is <= 40 KB)
@@ -64,8 +62,7 @@ def _trip_types_from(text: str):
     `enabled` not true, or no trip_types). Honors `enabled` the same way the hook
     does, so a config with `enabled: false` yields no trip set and a scheduled pass
     does not route. The config is the only gate for both halves: there is no env
-    off-switch, so to stop routing set `enabled: false` in the canonical config
-    (authoritative even over a legacy fallback), not merely delete one config file."""
+    off-switch, so to stop routing set `enabled: false` in the config or delete it."""
     try:
         cfg = json.loads(text)
     except (json.JSONDecodeError, ValueError):
@@ -80,34 +77,15 @@ def _trip_types_from(text: str):
 
 def load_vault_types() -> set:
     """Frontmatter `type:` values that count as mis-routed: the config's trip_types
-    keys, so scanner and hook agree on what is vault-bound. Same read-order as the
-    hook: only a MISSING canonical (FileNotFoundError) falls back to legacy; a
-    present-but-unreadable or undecodable canonical is authoritative and does not
-    fall back. Misroute detection is opt-in like the hook: with no usable config
-    the trip set is empty, so a routing pass is never triggered for a tenant who
-    has not configured routing (bloat still trips)."""
-    types = None
-    ctext = None
-    canonical_missing = False
+    keys, so scanner and hook agree on what is vault-bound. Misroute detection is
+    opt-in like the hook: with no usable config the trip set is empty, so a routing
+    pass is never triggered for a tenant who has not configured routing (bloat
+    still trips)."""
     try:
-        ctext = CONFIG_FILE.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        canonical_missing = True
+        text = CONFIG_FILE.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
-        pass  # present but unreadable: authoritative-unusable, no legacy fallback
-    if not canonical_missing:
-        types = _trip_types_from(ctext) if ctext is not None else None
-    else:
-        try:
-            ltext = LEGACY_CONFIG_FILE.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            ltext = None
-        if ltext is not None:
-            types = _trip_types_from(ltext)
-            if types is not None:
-                print(f"note: config fallback served from legacy path {LEGACY_CONFIG_FILE} "
-                      f"(canonical {CONFIG_FILE} missing)")
-    return types if types is not None else set()
+        return set()
+    return _trip_types_from(text) or set()
 
 
 def parse_frontmatter_type(text: str) -> str:

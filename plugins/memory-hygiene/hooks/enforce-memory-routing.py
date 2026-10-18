@@ -18,9 +18,7 @@ OPT-IN PER TENANT. With no config (or `enabled` not true) the hook no-ops:
       "memory_path_regex": "optional; default matches any auto-memory dir"
     }
 
-The canonical path is `~/.config/memory-hygiene/memory-routing.json`; when absent the
-hook falls back to `~/.config/harness-management/memory-routing.json` (the pair's
-pre-move path). See hooks/memory-routing.config.example.json. The config is the only
+The config path is `~/.config/memory-hygiene/memory-routing.json`. See hooks/memory-routing.config.example.json. The config is the only
 gate: with no usable config the hook no-ops, and there is no separate off-switch.
 Always exits 0.
 """
@@ -33,15 +31,9 @@ import time
 from pathlib import Path
 
 CONFIG_PATH = Path.home() / ".config/memory-hygiene/memory-routing.json"
-LEGACY_CONFIG_PATH = Path.home() / ".config/harness-management/memory-routing.json"
 LOG_FILE = Path.home() / ".local/log/memory-routing-hook.log"
 DEFAULT_MEM_RE = r"/\.claude/projects/[^/]+/memory/[^/]+\.md$"
 SKIP_NAMES = {"MEMORY.md", ".gitignore"}
-
-# Sentinel for "canonical config MISSING" (FileNotFoundError), kept distinct from
-# a present config that parses to None. Only a MISSING canonical falls back to
-# legacy; a present-but-unreadable/null/malformed canonical is authoritative.
-_CANONICAL_ABSENT = object()
 
 
 def normalize_seps(path: str) -> str:
@@ -66,46 +58,24 @@ def log(msg: str) -> None:
         pass
 
 
-def load_config() -> tuple:
-    """Per-tenant opt-in config. Returns (cfg, served_from_legacy).
+def load_config() -> dict:
+    """Per-tenant opt-in config: the usable dict, or {} when absent, unreadable,
+    malformed, disabled, or without trip_types.
 
     PURE READ (no write/mkdir/log), so it is safe to call before the trip is
-    confirmed. `cfg` is the usable opt-in dict, or {} when unusable (absent,
-    disabled, or no trip_types). Canonical is read first; only a MISSING canonical
-    (FileNotFoundError) falls back to legacy, so a present-but-unreadable or null
-    canonical is authoritative and does not silently prefer a legacy config. Shared
-    read-order with scan.py so scanner and hook agree on trip_types.
+    confirmed. Shared read rules with scan.py so scanner and hook agree on
+    trip_types.
     """
     try:
-        ctext = CONFIG_PATH.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        cfg = _CANONICAL_ABSENT
-    except (OSError, UnicodeDecodeError):
-        cfg = None  # present but unreadable/undecodable: authoritative-unusable, no fallback
-    else:
-        try:
-            cfg = json.loads(ctext)
-        except (json.JSONDecodeError, ValueError):
-            cfg = None
-
-    served_from_legacy = False
-    if cfg is _CANONICAL_ABSENT:
-        try:
-            ltext = LEGACY_CONFIG_PATH.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return {}, False
-        try:
-            cfg = json.loads(ltext)
-        except (json.JSONDecodeError, ValueError):
-            return {}, False
-        served_from_legacy = True
-
+        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
+        return {}
     if not isinstance(cfg, dict) or cfg.get("enabled") is not True:
-        return {}, served_from_legacy
+        return {}
     trip = cfg.get("trip_types")
     if not isinstance(trip, dict) or not trip:
-        return {}, served_from_legacy
-    return cfg, served_from_legacy
+        return {}
+    return cfg
 
 
 def frontmatter_type(text: str) -> str:
@@ -149,7 +119,7 @@ def main() -> int:
     # Pure config read before the path guard, so a tenant's memory_path_regex can
     # act as a TRUE override of the default matcher. All disk writes stay deferred
     # to a confirmed trip below.
-    cfg, served_from_legacy = load_config()
+    cfg = load_config()
 
     # A valid memory_path_regex overrides the default (can broaden, not just
     # narrow); a malformed one falls back to the default rather than dropping the guard.
@@ -194,9 +164,6 @@ def main() -> int:
         return 0
 
     # Confirmed trip: now the deferred disk writes.
-    if served_from_legacy:
-        log(f"config fallback: served from legacy path {LEGACY_CONFIG_PATH} "
-            f"(canonical {CONFIG_PATH} absent)")
 
     vault_env = os.environ.get("AGENT_VAULT", "").strip()
     vault_name = Path(vault_env).name if vault_env else "your vault"
