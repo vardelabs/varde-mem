@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Smoke test for enforce-journal-tags.py (journal), moved and renamed from the
-harness-management monolith's enforce-daily-note-tags.py.
+monolith's enforce-daily-note-tags.py.
 
 Runs the hook as a subprocess against a throwaway $HOME and a real on-disk note, so the
 per-tenant config AND the before-document are both fully controlled.

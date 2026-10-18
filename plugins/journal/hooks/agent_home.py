@@ -34,7 +34,6 @@ no-op, a wrong candidate is a location an attacker chooses.
 """
 
 import os
-from pathlib import Path
 
 try:
     import pwd  # POSIX only; absent on Windows, a real host for these hooks.
@@ -106,9 +105,6 @@ def _windows_profile_dir(log=None):
         return None
 
 
-CONFIG_DIR_ENV = "HARNESS_MANAGEMENT_CONFIG_DIR"
-
-
 def _is_truly_absolute(value):
     """`os.path.isabs`, minus the drive-relative shapes it accepts on Windows.
 
@@ -139,25 +135,6 @@ def env_override_or_home(env_name, *parts, log=None):
     if home is None:
         return None
     return os.path.join(home, *parts)
-
-
-def config_path(name, log=None):
-    """Absolute path to one of this plugin's per-tenant hook configs, or None.
-
-    Resolved LAZILY by the caller, never at import. Two reasons, both real:
-    the hooks document a strict "payload first, disable-env second, disk work
-    third" ordering that a module-scope lookup jumps ahead of, and the lookup
-    is not free (a passwd entry that may be an NSS network call on POSIX, three
-    DLL loads plus a token open on Windows) on a PostToolUse hook that fires
-    for every Write and returns immediately for almost all of them.
-
-    Pass `log` so an unresolvable home is recorded rather than read as
-    "nothing configured"."""
-    base = env_override_or_home(CONFIG_DIR_ENV, ".config", "harness-management",
-                                log=log)
-    if base is None:
-        return None
-    return Path(base) / name
 
 
 def trusted_home(log=None):

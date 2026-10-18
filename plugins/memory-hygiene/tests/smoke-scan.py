@@ -4,8 +4,7 @@
 Runs scan.py as a subprocess against a throwaway $HOME and memory dir. Covers the
 verdict logic (bloat -> NEEDS_RUN, healthy -> SKIP, missing dir -> ERROR) and two
 config-resolution invariants: misroute detection is OFF without a routing config
-(opt-in, like the hook), and a present-but-unreadable canonical config does not
-fall back to a stale legacy config.
+(opt-in, like the hook), and an unreadable config turns it off too.
 
 Usage: python3 tests/smoke-scan.py   (exit 0 = all pass)
 """
@@ -41,8 +40,8 @@ def write_mems(memdir: Path, n: int, ftype: str) -> None:
         (memdir / f"m{i}.md").write_text(f"---\ntype: {ftype}\n---\nb\n", encoding="utf-8")
 
 
-def write_cfg(home: Path, *, legacy: bool = False) -> None:
-    d = home / (".config/harness-management" if legacy else ".config/memory-hygiene")
+def write_cfg(home: Path) -> None:
+    d = home / ".config/memory-hygiene"
     d.mkdir(parents=True, exist_ok=True)
     (d / "memory-routing.json").write_text(
         json.dumps({"enabled": True, "trip_types": {"project": "x", "user": "y"}}), encoding="utf-8")
@@ -102,15 +101,13 @@ def main() -> int:
         cases.append(("F1: with config, project memories -> NEEDS_RUN (misroute on)",
                       rc == 0 and verdict(out) == "NEEDS_RUN"))
 
-    # F2: a present-but-unreadable canonical (here a directory) must NOT fall back
-    # to a stale enabled legacy config, so misroute detection stays off -> SKIP.
+    # F2: an unreadable config (here a directory) turns misroute detection off.
     with tempfile.TemporaryDirectory() as td:
         home = Path(td); md = home / "m"; write_mems(md, 2, "project")
-        write_cfg(home, legacy=True)  # legacy would trip if wrongly served
-        (home / ".config/memory-hygiene/memory-routing.json").mkdir(parents=True)  # canonical is a DIR
+        (home / ".config/memory-hygiene/memory-routing.json").mkdir(parents=True)
         rc, out = run_scan(home, md)
-        cases.append(("F2: unreadable (directory) canonical does not use legacy -> SKIP",
-                      rc == 0 and verdict(out) == "SKIP" and "served from legacy" not in out))
+        cases.append(("F2: unreadable (directory) config -> SKIP",
+                      rc == 0 and verdict(out) == "SKIP"))
 
     # scanner honors `enabled`: an enabled:false config yields no trip set, so
     # misroute detection is off (routing is not done on a schedule when disabled).
@@ -122,18 +119,6 @@ def main() -> int:
         rc, out = run_scan(home, md)
         cases.append(("enabled:false config -> SKIP (routing honors enabled)",
                       rc == 0 and verdict(out) == "SKIP"))
-
-    # A DISABLED canonical must suppress an ENABLED legacy fallback (scanner half): with
-    # no env kill-switch, enabled:false at the canonical path is a migrating tenant's only stop.
-    with tempfile.TemporaryDirectory() as td:
-        home = Path(td); md = home / "m"; write_mems(md, 2, "project")
-        d = home / ".config/memory-hygiene"; d.mkdir(parents=True, exist_ok=True)
-        (d / "memory-routing.json").write_text(
-            json.dumps({"enabled": False, "trip_types": {"project": "x"}}), encoding="utf-8")
-        write_cfg(home, legacy=True)  # enabled legacy, must NOT serve
-        rc, out = run_scan(home, md)
-        cases.append(("disabled canonical suppresses enabled legacy -> SKIP",
-                      rc == 0 and verdict(out) == "SKIP" and "served from legacy" not in out))
 
     # a hyphenated trip_type key + a hyphenated memory type trips (parser accepts hyphens/digits).
     with tempfile.TemporaryDirectory() as td:

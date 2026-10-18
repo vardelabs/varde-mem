@@ -3,8 +3,8 @@ r"""Smoke test for enforce-memory-routing.py (memory-hygiene).
 
 Runs the hook as a subprocess against a throwaway $HOME so the config and memory
 file are fully controlled. Covers the opt-in gate (the config is the only gate),
-trip-type match, silent cases, canonical/legacy config-path fallback, the true
-memory_path_regex override, the null-canonical sentinel, Windows-path parity, and
+trip-type match, silent cases, the true memory_path_regex override, a null
+config, Windows-path parity, and
 the hot-path no-disk-write guarantee.
 
 Windows cases use write_raw_named to create each fixture on disk under a name
@@ -25,8 +25,7 @@ from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "enforce-memory-routing.py"
 
-CANONICAL_CFG_DIR = ".config/memory-hygiene"
-LEGACY_CFG_DIR = ".config/harness-management"
+CFG_DIR = ".config/memory-hygiene"
 
 
 def run(home: Path, file_path: str) -> str:
@@ -42,13 +41,13 @@ def run(home: Path, file_path: str) -> str:
 
 
 def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
-    """Run with a RAW payload and optional RAW config (written to canonical);
+    """Run with a RAW payload and optional RAW config (written to the config path);
     return (returncode, stdout) without asserting, for fail-open cases."""
     env = dict(os.environ)
     env["HOME"] = str(home)
     env["AGENT_VAULT"] = str(home / "agent-vault")
     if cfg is not None:
-        cfg_dir = home / CANONICAL_CFG_DIR
+        cfg_dir = home / CFG_DIR
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / "memory-routing.json").write_text(cfg, encoding="utf-8")
     p = subprocess.run([sys.executable, str(HOOK)], input=payload,
@@ -56,9 +55,9 @@ def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
     return p.returncode, p.stdout.strip()
 
 
-def write_config(home: Path, enabled: bool = True, *, legacy: bool = False) -> None:
-    """Write the opt-in config to the canonical path, or the legacy path when legacy=True."""
-    cfg_dir = home / (LEGACY_CFG_DIR if legacy else CANONICAL_CFG_DIR)
+def write_config(home: Path, enabled: bool = True) -> None:
+    """Write the opt-in config to its path."""
+    cfg_dir = home / CFG_DIR
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "memory-routing.json").write_text(json.dumps({
         "enabled": enabled,
@@ -70,10 +69,9 @@ def write_config(home: Path, enabled: bool = True, *, legacy: bool = False) -> N
 
 
 def clear_configs(home: Path) -> None:
-    for d in (CANONICAL_CFG_DIR, LEGACY_CFG_DIR):
-        f = home / d / "memory-routing.json"
-        if f.exists():
-            f.unlink()
+    f = home / CFG_DIR / "memory-routing.json"
+    if f.exists():
+        f.unlink()
 
 
 def write_mem(home: Path, name: str, ftype: str, nested: bool = False) -> str:
@@ -107,7 +105,7 @@ def main() -> int:
         # opt-in gate + trip-type match
         write_config(home)
         out = run(home, write_mem(home, "proj.md", "project"))
-        cases.append(("project trips with canonical config", '"additionalContext"' in out and "vault" in out))
+        cases.append(("project trips with the config", '"additionalContext"' in out and "vault" in out))
         out = run(home, write_mem(home, "ref.md", "reference"))
         cases.append(("reference stays silent", out == ""))
 
@@ -142,22 +140,6 @@ def main() -> int:
         out = run(home, write_mem(home, "proj2.md", "project"))
         cases.append(("disabled config = no-op", out == ""))
 
-        # config-path fallback + canonical preference
-        clear_configs(home)
-        write_config(home, legacy=True)
-        out = run(home, write_mem(home, "proj6.md", "project"))
-        cases.append(("legacy config-path fallback serves", '"additionalContext"' in out and "vault" in out))
-        write_config(home, enabled=True)                 # canonical enabled
-        write_config(home, enabled=False, legacy=True)   # legacy disabled, must be ignored
-        out = run(home, write_mem(home, "proj7.md", "project"))
-        cases.append(("canonical config preferred over legacy", '"additionalContext"' in out and "vault" in out))
-        # A DISABLED canonical must suppress an ENABLED legacy fallback: with no env
-        # kill-switch, enabled:false at the canonical path is a migrating tenant's only
-        # off-switch, so a regression here would silently revive the advisory.
-        write_config(home, enabled=False)                # canonical disabled
-        write_config(home, enabled=True, legacy=True)    # legacy enabled, must NOT serve
-        out = run(home, write_mem(home, "proj8.md", "project"))
-        cases.append(("disabled canonical suppresses enabled legacy", out == ""))
         clear_configs(home)
 
         # non-memory path + nested metadata.type
@@ -221,13 +203,13 @@ def main() -> int:
         cases.append(("trip_types key normalized (capitalized/padded key trips)",
                       rc == 0 and '"additionalContext"' in out and "vault" in out))
 
-        # an undecodable (invalid UTF-8) canonical config must fail open, not crash;
-        # it is present-authoritative-unusable, so the hook stays silent (no fallback).
+        # an undecodable (invalid UTF-8) config must fail open, not crash, and the
+        # hook stays silent.
         clear_configs(home)
-        (home / CANONICAL_CFG_DIR).mkdir(parents=True, exist_ok=True)
-        (home / CANONICAL_CFG_DIR / "memory-routing.json").write_bytes(b"\xff\xfe not utf8")
+        (home / CFG_DIR).mkdir(parents=True, exist_ok=True)
+        (home / CFG_DIR / "memory-routing.json").write_bytes(b"\xff\xfe not utf8")
         out = run(home, write_mem(home, "badenc.md", "project"))
-        cases.append(("undecodable canonical config: fail-open, silent", out == ""))
+        cases.append(("undecodable config: fail-open, silent", out == ""))
         clear_configs(home)
 
         # memory_path_regex is a TRUE override: broadening advises on a non-default path...
@@ -253,21 +235,18 @@ def main() -> int:
             {"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg=narrow_cfg)
         cases.append(("narrowing memory_path_regex override stays silent", rc == 0 and out == ""))
 
-        # null-canonical sentinel: a present-but-null canonical is authoritative and
-        # does NOT fall through to a valid enabled legacy (which would have advised).
         clear_configs(home)
-        write_config(home, enabled=True, legacy=True)
         mp = write_mem(home, "nullcfg.md", "project")
         rc, out = run_rc(home, json.dumps(
             {"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg="null")
-        cases.append(("null canonical config is authoritative (no legacy fallback)", rc == 0 and out == ""))
+        cases.append(("null config stays silent", rc == 0 and out == ""))
 
     # Hot-path no-disk-write: an ordinary non-memory write must do zero disk work,
     # so the log file must not even be created (fresh $HOME).
     with tempfile.TemporaryDirectory() as td:
         home = Path(td)
         log_file = home / ".local/log/memory-routing-hook.log"
-        write_config(home, legacy=True)
+        write_config(home)
         other = home / "notes.md"
         other.write_text("---\ntype: project\n---\n", encoding="utf-8")
         out = run(home, str(other))

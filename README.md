@@ -150,4 +150,5 @@ The decay idea is [OptMem](https://github.com/VictorTaelin/OptMem)'s: tile histo
 
 ## License
 
-No license has been selected yet. Until one is added, all rights are reserved.
+This project is licensed under the Apache License, Version 2.0. See
+[`LICENSE`](LICENSE) for the complete text.
