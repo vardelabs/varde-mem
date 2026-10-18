@@ -25,7 +25,7 @@ from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "enforce-memory-routing.py"
 
-CANONICAL_CFG_DIR = ".config/memory-hygiene"
+CFG_DIR = ".config/memory-hygiene"
 
 
 def run(home: Path, file_path: str) -> str:
@@ -47,7 +47,7 @@ def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
     env["HOME"] = str(home)
     env["AGENT_VAULT"] = str(home / "agent-vault")
     if cfg is not None:
-        cfg_dir = home / CANONICAL_CFG_DIR
+        cfg_dir = home / CFG_DIR
         cfg_dir.mkdir(parents=True, exist_ok=True)
         (cfg_dir / "memory-routing.json").write_text(cfg, encoding="utf-8")
     p = subprocess.run([sys.executable, str(HOOK)], input=payload,
@@ -57,7 +57,7 @@ def run_rc(home: Path, payload: str, *, cfg=None) -> tuple:
 
 def write_config(home: Path, enabled: bool = True) -> None:
     """Write the opt-in config to its path."""
-    cfg_dir = home / CANONICAL_CFG_DIR
+    cfg_dir = home / CFG_DIR
     cfg_dir.mkdir(parents=True, exist_ok=True)
     (cfg_dir / "memory-routing.json").write_text(json.dumps({
         "enabled": enabled,
@@ -69,7 +69,7 @@ def write_config(home: Path, enabled: bool = True) -> None:
 
 
 def clear_configs(home: Path) -> None:
-    f = home / CANONICAL_CFG_DIR / "memory-routing.json"
+    f = home / CFG_DIR / "memory-routing.json"
     if f.exists():
         f.unlink()
 
@@ -206,8 +206,8 @@ def main() -> int:
         # an undecodable (invalid UTF-8) canonical config must fail open, not crash;
         # it is present-authoritative-unusable, so the hook stays silent (no fallback).
         clear_configs(home)
-        (home / CANONICAL_CFG_DIR).mkdir(parents=True, exist_ok=True)
-        (home / CANONICAL_CFG_DIR / "memory-routing.json").write_bytes(b"\xff\xfe not utf8")
+        (home / CFG_DIR).mkdir(parents=True, exist_ok=True)
+        (home / CFG_DIR / "memory-routing.json").write_bytes(b"\xff\xfe not utf8")
         out = run(home, write_mem(home, "badenc.md", "project"))
         cases.append(("undecodable canonical config: fail-open, silent", out == ""))
         clear_configs(home)

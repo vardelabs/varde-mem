@@ -18,7 +18,8 @@ OPT-IN PER TENANT. With no config (or `enabled` not true) the hook no-ops:
       "memory_path_regex": "optional; default matches any auto-memory dir"
     }
 
-The config path is `~/.config/memory-hygiene/memory-routing.json`. See hooks/memory-routing.config.example.json. The config is the only
+The config path is `~/.config/memory-hygiene/memory-routing.json`. See
+hooks/memory-routing.config.example.json. The config is the only
 gate: with no usable config the hook no-ops, and there is no separate off-switch.
 Always exits 0.
 """
@@ -163,8 +164,7 @@ def main() -> int:
     if not guidance:
         return 0
 
-    # Confirmed trip: now the deferred disk writes.
-
+    # Confirmed trip: only now touch the disk.
     vault_env = os.environ.get("AGENT_VAULT", "").strip()
     vault_name = Path(vault_env).name if vault_env else "your vault"
     name = Path(file_path).name
