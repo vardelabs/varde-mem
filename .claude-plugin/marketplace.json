@@ -11,7 +11,7 @@
       "name": "journal",
       "source": "./plugins/journal",
       "description": "Hooks that keep a VardeMem journal non-empty and well-formed, load the bounded read at session start, and remind when a journal line is owed.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "Varde Labs"
       }
@@ -20,7 +20,7 @@
       "name": "memory-hygiene",
       "source": "./plugins/memory-hygiene",
       "description": "A skill and a hook that keep Claude Code's auto-memory directory small: periodic consolidation with a snapshot undo, and a write-time routing check.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "Varde Labs"
       }
