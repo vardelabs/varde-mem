@@ -6,6 +6,13 @@ index `MEMORY.md` loads into every session, so it bloats when facts land in it t
 belong in the agent's vault or in a plugin. This plugin keeps it lean from both
 ends: a write-time reflex and a periodic cleanup.
 
+## Install
+
+```
+/plugin marketplace add vardelabs/varde-mem
+/plugin install memory-hygiene@varde-mem
+```
+
 ## What ships
 
 - **`skills/consolidate-memory/`**: the periodic cleanup. Merges related
