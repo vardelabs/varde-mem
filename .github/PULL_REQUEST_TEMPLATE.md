@@ -4,7 +4,4 @@
 
 ## Checks
 
-- [ ] `python3 vardemem.py selftest` passes from the repository root
-- [ ] The diff holds no real journal content, secrets, private hostnames, tenant paths, or operational logs
-- [ ] An index-arithmetic or configuration fix adds a `selftest` property check
-- [ ] `vardemem.py` still uses the standard library only
+- [ ] I followed the "Before opening a pull request" checklist in [`CONTRIBUTING.md`](https://github.com/vardelabs/varde-mem/blob/main/CONTRIBUTING.md).

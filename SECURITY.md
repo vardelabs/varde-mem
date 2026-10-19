@@ -28,7 +28,9 @@ These count as vulnerabilities here:
 
 - auto-discovery that reads or writes a tree the operator did not put on the
   trusted-roots list or name in `$AGENT_VAULT`
-- a `.vardemem.json` path that escapes its base directory
+- a `.vardemem.json` path that is absolute or uses `..` and still passes the
+  config check. A symlinked journal outside the root is supported, not a
+  vulnerability.
 - a hook in `plugins/` that runs a command or writes a file outside the scope
   its README states
 - a journal write that loses or edits an existing day file
