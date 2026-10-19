@@ -9,6 +9,13 @@ path the way `vardemem` does (a trusted walk from the session cwd for
 **Version:** see the `journal` entry in the consuming marketplace; it is not
 carried in `plugin.json`.
 
+## Install
+
+```
+/plugin marketplace add vardelabs/varde-mem
+/plugin install journal@varde-mem
+```
+
 ## `enforce-journal-entry.py` (Stop hook)
 
 Blocks the Stop **once per session** when the session did substantive work and

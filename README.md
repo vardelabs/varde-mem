@@ -98,7 +98,15 @@ The one definition of "this session owes the Journal a line", for every reminder
 - **`journal`**: hooks that keep the journal non-empty and well-formed. They block a session end once when the session did real work and wrote no journal line, deny an untagged entry, load the bounded read at session start, and add a reminder when `vardemem owed` reports a line is due. See [`plugins/journal/README.md`](plugins/journal/README.md).
 - **`memory-hygiene`**: a skill and a hook that keep Claude Code's auto-memory directory small. See [`plugins/memory-hygiene/README.md`](plugins/memory-hygiene/README.md).
 
-To try one locally, start Claude Code with `claude --plugin-dir plugins/journal`.
+Install either plugin from this repo's marketplace:
+
+```
+/plugin marketplace add vardelabs/varde-mem
+/plugin install journal@varde-mem
+/plugin install memory-hygiene@varde-mem
+```
+
+To try one from a checkout instead, start Claude Code with `claude --plugin-dir plugins/journal`.
 
 ## Configuration
 
