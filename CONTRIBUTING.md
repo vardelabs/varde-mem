@@ -1,6 +1,6 @@
 # Contributing
 
-This repository is private during early development.
+Treat this repository as public.
 Every reachable commit must be safe to publish.
 
 ## Before opening a pull request
