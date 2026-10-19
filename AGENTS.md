@@ -2,7 +2,7 @@
 
 These rules apply to every agent and harness that works in this repo. `CLAUDE.md` imports this file, so Claude Code reads the same text.
 
-This repo is private now and will be public. Read `README.md` for what VardeMem does and `CONTRIBUTING.md` for the pull request checklist before changing anything. `CONTRIBUTING.md` owns the checklist; the rules below are its safety subset, for agents. Every reachable commit must be safe to publish: a mistake stays in history even after a later commit removes it.
+Treat this repo as public. Read `README.md` for what VardeMem does and `CONTRIBUTING.md` for the pull request checklist before changing anything. `CONTRIBUTING.md` owns the checklist; the rules below are its safety subset, for agents. Every reachable commit must be safe to publish: a mistake stays in history even after a later commit removes it.
 
 ## Rules
 

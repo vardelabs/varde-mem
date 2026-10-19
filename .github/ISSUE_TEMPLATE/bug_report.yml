@@ -1,0 +1,51 @@
+name: Bug report
+description: vardemem or a plugin hook does not behave as documented.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Use a synthetic journal only. Do not paste real journal content,
+        private paths, or operational logs.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - vardemem.py
+        - journal plugin
+        - memory-hygiene plugin
+    validations:
+      required: true
+  - type: input
+    id: commit
+    attributes:
+      label: Commit
+      description: The commit you tested (`git rev-parse HEAD`).
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The commands you ran against a synthetic journal tree.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behavior
+      description: Include the exit code and the stderr text.
+    validations:
+      required: true
+  - type: input
+    id: selftest
+    attributes:
+      label: selftest result
+      description: The last line of `python3 vardemem.py selftest`.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and Python version.

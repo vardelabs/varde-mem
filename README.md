@@ -1,5 +1,9 @@
 # varde-mem
 
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+![Python 3](https://img.shields.io/badge/python-3-blue.svg)
+![Dependencies: none](https://img.shields.io/badge/dependencies-none-brightgreen.svg)
+
 > Persistent memory for a long-running agent, at a fixed reading cost. One file of Python 3, standard library only, no dependencies.
 
 An agent that runs for months piles up more history than it can afford to re-read at the start of every session. VardeMem keeps a **decayed index** over a directory of per-day journal files: recent days stay verbatim, and the older a stretch gets, the fewer lines it keeps, folding a week, then a month, then a quarter into a single line. One read covers all of history within a fixed line budget, however long the history grows; you keep it that cheap by writing a rollup or two per session.
@@ -33,7 +37,7 @@ The read prints oldest first. Recent days print in full at the bottom; each olde
 
 ## Install
 
-Nothing to build. Clone the repo and link the one file onto your `PATH`:
+You need Python 3. Nothing to build. Clone the repo and link the one file onto your `PATH`:
 
 ```bash
 ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
@@ -87,6 +91,15 @@ The one definition of "this session owes the Journal a line", for every reminder
 - **Owed:** work commits reach `--threshold` (default 5).
 - **Errors:** `owed` is `false` and an `error` key says why. A reminder that breaks goes quiet.
 
+## Claude Code Plugins
+
+`plugins/` holds two optional Claude Code plugins for an agent that keeps its history in VardeMem. Both are opt-in per user, fail open, and resolve the journal the same way `vardemem` does.
+
+- **`journal`**: hooks that keep the journal non-empty and well-formed. They block a session end once when the session did real work and wrote no journal line, deny an untagged entry, load the bounded read at session start, and add a reminder when `vardemem owed` reports a line is due. See [`plugins/journal/README.md`](plugins/journal/README.md).
+- **`memory-hygiene`**: a skill and a hook that keep Claude Code's auto-memory directory small. See [`plugins/memory-hygiene/README.md`](plugins/memory-hygiene/README.md).
+
+To try one locally, start Claude Code with `claude --plugin-dir plugins/journal`.
+
 ## Configuration
 
 A managed tree carries a `.vardemem.json` at its root. That file is both the config and the marker: the directory holding it is the root.
@@ -136,13 +149,23 @@ VardeMem tiles history with aligned power-of-two blocks whose detail thins with 
 | Path | Purpose |
 | --- | --- |
 | `vardemem.py` | The tool. Implementation plus `selftest`. |
+| `plugins/` | The optional Claude Code plugins, each with its own README and smoke tests. |
 | `CONTRIBUTING.md` | Pre-PR checklist and the boundaries a change keeps. |
+| `SECURITY.md` | How to report a vulnerability. |
 
 CI runs two checks. `selftest` runs the property checks and the plugin smoke suites on pull requests; `no-journal-content` keeps real history out of the repo. The job definitions live outside this repo.
 
 ## Contributing
 
-This repository ships no real journal content, test fixtures included; fixtures are synthetic by construction. See [CONTRIBUTING.md](CONTRIBUTING.md) for the pre-PR checklist.
+This repository ships no real journal content, test fixtures included; fixtures are synthetic by construction. See [CONTRIBUTING.md](CONTRIBUTING.md) for the pre-PR checklist and the [code of conduct](CODE_OF_CONDUCT.md).
+
+## Status
+
+Pre-1.0. VardeMem is in daily use as the memory of long-running agents, but commands and `.vardemem.json` keys can still change, and the plugins change faster than the tool. Open work is tracked in [issues](https://github.com/vardelabs/varde-mem/issues).
+
+## Security
+
+Report a vulnerability privately. See [`SECURITY.md`](SECURITY.md).
 
 ## Credit
 
