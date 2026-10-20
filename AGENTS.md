@@ -14,4 +14,5 @@ Treat this repo as public. Read `README.md` for what VardeMem does and `CONTRIBU
 - **Standard library only.** `vardemem.py` is one file of Python 3 with no dependencies.
 - **Keep the discovery boundary.** Auto-discovery reads only a tree on the trusted-roots list (`_trusted_journal_roots()` in `vardemem.py`) or one that `$AGENT_VAULT` names. Do not widen it.
 - **If private material lands, stop and tell the operator.** This covers a secret, journal text, or a customer identifier that reaches a commit, a branch, or a PR, and an internal name that reaches content (the scope of the internal-names rule). The standard attribution in commits and PR footers does not count. Rotate any exposed secret, because deleting it does not make it private again. A follow-up commit that removes the text does not fix it, because history keeps it. Rewriting history is the operator's decision.
+- **Record a plugin change as a change file.** Follow `CONTRIBUTING.md`, step 5, and leave every version field alone.
 - **Run the checks before a PR:** `python3 vardemem.py selftest` from the repo root, and a test for any index-arithmetic or configuration defect you fix.
