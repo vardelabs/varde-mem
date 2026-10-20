@@ -9,6 +9,7 @@ Every reachable commit must be safe to publish.
 2. Confirm the diff contains no secrets, private hostnames, tenant paths, real journal content, customer material, or operational logs.
 3. Keep deployment-specific values in the managed tree's `.vardemem.json`, which lives outside this repository, never in a committed default.
 4. Add a `selftest` property check for any index-arithmetic or configuration defect you fix.
+5. A pull request that changes a plugin adds `.changes/<plugin>/<slug>.<patch|minor|major>.md`, holding a one-line summary, and changes no version field. Size the bump by the change: a fix or docs change is `patch`, a feature is `minor`, a breaking change is `major`. Use a slug unique to the PR, such as its issue number. The maintainers set the version when they release.
 
 ## Boundaries
 
