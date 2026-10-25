@@ -56,7 +56,7 @@ def run(payload, home, env=None, timeout=5):
     e = dict(os.environ)
     e["HOME"] = str(home)
     # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from
-    # $HOME (see #2310). Point it at the throwaway home's config dir so the
+    # $HOME. Point it at the throwaway home's config dir so the
     # suite stays hermetic and never reads the developer's real config.
     e["JOURNAL_CONFIG_DIR"] = str(Path(home) / CFG_DIR)
     e.pop("JOURNAL_DISABLED", None); e.pop("HARNESS_MANAGEMENT_DISABLED", None)
@@ -253,7 +253,7 @@ with tempfile.TemporaryDirectory() as tmp:
           run(payload(sid, t.write(), str(vault / "Rules")), home,
               {"VARDEMEM_TRUST_FILE": str(trust_file)})[0] is True)
 
-    # #2310 guard: config is disk-located via $JOURNAL_CONFIG_DIR, never derived
+    # Guard: config is disk-located via $JOURNAL_CONFIG_DIR, never derived
     # from $HOME. A spoofed $HOME carrying an enabled config must not force a
     # block when the absolute override points at a dir that has none.
     sid, t = new_session(tmp, "homespoof")
@@ -608,7 +608,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # otherwise untested. Prime the home cache at a temp home that HOLDS an
     # enabled config, clear the override, point $HOME at a home without one, and
     # assert load_config() reads the trusted-home copy. This is the property
-    # #2310 restored; it fails if the fallback reverts to $HOME or its
+    # this hook depends on; it fails if the fallback reverts to $HOME or its
     # .config/journal parts change.
     cfg_home = Path(tmp) / "cfg-home"
     (cfg_home / ".config" / "journal").mkdir(parents=True, exist_ok=True)
@@ -628,7 +628,7 @@ with tempfile.TemporaryDirectory() as tmp:
             os.environ["JOURNAL_CONFIG_DIR"] = _saved_jcd
         if _saved_home is not None:
             os.environ["HOME"] = _saved_home
-    # Visibility (#2310): an unresolvable home must be RECORDED, not silently
+    # Visibility: an unresolvable home must be RECORDED, not silently
     # read as "nothing configured". Drive the real trusted_home failure path
     # (pwd.getpwuid raising) with no override set, and assert load_config both
     # no-ops AND logs. Fails if load_config drops the log= it passes.

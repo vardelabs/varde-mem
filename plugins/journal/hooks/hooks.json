@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','preload-spine.py') if r else None; (sys.stderr.write('[journal] preload-spine: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','preload-spine.py') if r else None; (sys.stderr.write('[journal] preload-spine: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
             "timeout": 12
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','preload-spine.py') if r else None; (sys.stderr.write('[journal] preload-spine: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','preload-spine.py') if r else None; (sys.stderr.write('[journal] preload-spine: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
             "timeout": 12
           }
         ]
@@ -28,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','enforce-journal-tags.py') if r else None; (sys.stderr.write('[journal] enforce-journal-tags: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','enforce-journal-tags.py') if r else None; (sys.stderr.write('[journal] enforce-journal-tags: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -39,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','enforce-journal-entry.py') if r else None; (sys.stderr.write('[journal] enforce-journal-entry: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','enforce-journal-entry.py') if r else None; (sys.stderr.write('[journal] enforce-journal-entry: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -50,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','remind-journal-owed.py') if r else None; (sys.stderr.write('[journal] remind-journal-owed: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','remind-journal-owed.py') if r else None; (sys.stderr.write('[journal] remind-journal-owed: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
             "timeout": 5
           }
         ]
@@ -61,7 +61,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','remind-journal-owed.py') if r else None; (sys.stderr.write('[journal] remind-journal-owed: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open, #1383)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
+            "command": "python3 -c \"import os,runpy,sys; r=os.environ.get('CLAUDE_PLUGIN_ROOT'); f=os.path.join(r,'hooks','remind-journal-owed.py') if r else None; (sys.stderr.write('[journal] remind-journal-owed: CLAUDE_PLUGIN_ROOT unresolved or script missing, hook skipped (fail-open)\\n'), sys.exit(0)) if not f or not os.path.isfile(f) else runpy.run_path(f,run_name='__main__')\"",
             "timeout": 5
           }
         ]

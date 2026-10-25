@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Smoke test for the EPISODIC SPINE phase of preload-session-cache.py (#1526).
+r"""Smoke test for the EPISODIC SPINE phase of preload-session-cache.py.
 
 Runs the SessionStart hook as a subprocess against throwaway trees, with a STUB
 `vardemem` installed where the resolver looks, so every assertion is about the
@@ -56,17 +56,17 @@ Covers, in order:
                              not silently dropped
  22. child interp safety  -- a python3 shadowed on $PATH is never run as the
                              child vardemem's interpreter
- 23. top-level fail-open  -- a main() crash surfaces one (fail-open, #1383)
+ 23. top-level fail-open  -- a main() crash surfaces one (fail-open)
                              stderr note and still exits 0, not a silent
-                             swallow (#2125)
+                             swallow
  24. platform branch      -- Windows resolves real Windows directories instead
                              of falling into the POSIX list (where it resolved
                              nothing, forever, silently), and NO env var
                              spelling of "home" can redirect the search on
-                             either platform (#2296, extending #1962)
+                             either platform
 
 The `3a`-`3g` cases that stood here covered the Git-worktree allowlist that
-resolved a spine script by walking up from the cwd. #1962 deleted that machinery
+resolved a spine script by walking up from the cwd. The home-redirect fix deleted that machinery
 along with the walk; the binary is now resolved from a fixed list of directories.
 `3k`-`3n` are what guards it instead.
 
@@ -223,8 +223,8 @@ def _load_hook_module():
 
 
 def make_vault(root: Path, cache="in-flight state here"):
-    """A vault with a session cache. It no longer supplies the TOOL: after
-    #161 the hook runs an installed command, so the tool comes from
+    """A vault with a session cache. It no longer supplies the TOOL: the
+    hook runs an installed command, so the tool comes from
     `make_home` and the vault is only what the session sits in."""
     (root / CACHE_REL).mkdir(parents=True, exist_ok=True)
     (root / CACHE_REL / "example-operator.md").write_text(cache, encoding="utf-8")
@@ -351,14 +351,14 @@ def main():
             # The `$HOME` seam below only redirects the log on POSIX. On
             # Windows `Path.home()` consults `%USERPROFILE%` first, so
             # `LOG_FILE` still lands in the operator's real home and this read
-            # raises FileNotFoundError. That was invisible until #2296 made
+            # raises FileNotFoundError. That was invisible until the Windows fix made
             # `resolve_vardemem()` capable of returning a tool on Windows at
             # all, which is what first made this branch reachable there.
-            # Tracked in #2301 with the LOG_FILE derivation itself; skipped
+            # It belongs with the LOG_FILE derivation itself; skipped
             # rather than silently weakened, so the POSIX coverage is unchanged.
             if real_tool and os.name == "nt":
                 print("skip 1b log assertion on Windows: $HOME does not move "
-                      "Path.home() there (#2301)")
+                      "Path.home() there")
             elif real_tool:
                 (vault / "Operations" / "Activity" / "Journal").mkdir(parents=True)
                 log_home = root / "log-home"
@@ -1125,8 +1125,8 @@ def main():
         crash_code = e.code
     crash_out = crash_stderr.getvalue()
     check(crash_code == 0, "23 a main() crash still exits 0 (fail-open)")
-    check("(fail-open, #1383)" in crash_out and "preload-spine.py" in crash_out,
-          "23 and surfaces one #1383 note on stderr, not a silent swallow")
+    check("(fail-open)" in crash_out and "preload-spine.py" in crash_out,
+          "23 and surfaces one fail-open note on stderr, not a silent swallow")
 
     # --- 24. the platform branch resolves somewhere real, un-redirectably ---
     # Windows fell into the `pwd`-missing fallback, which returns three POSIX
@@ -1210,7 +1210,7 @@ def main():
     # 24d. THE SECURITY ASSERTION, and the reason this branch is not just
     # `expanduser`. Poisoning every env var that spells "home" must not put an
     # attacker-chosen directory in the list. A SHORTER list is acceptable
-    # (fail-open, same as an uninstalled host); a REDIRECTED one is the #1962
+    # (fail-open, same as an uninstalled host); a REDIRECTED one is the home-redirect
     # exploit reopened on a second platform.
     #
     # THE DECOY MUST EXIST. The first version of this case poisoned to a
@@ -1246,7 +1246,7 @@ def main():
         # is absent from it. An empty capture satisfies any "not in" check, and
         # that is not hypothetical here -- unpinned text=True decodes with the
         # locale codec, and on Windows a cp1252 failure kills the reader thread
-        # and hands back returncode 0 with stdout None (#1386). That would make
+        # and hands back returncode 0 with stdout None. That would make
         # this case vacuous a second time, by a different mechanism than the
         # non-existent sentinel it already had.
         check(got24.stdout.strip() != "",
@@ -1254,7 +1254,7 @@ def main():
               "check below cannot pass on an empty capture")
         check(str(decoy) not in got24.stdout,
               "24d an EXISTING attacker-controlled home does not redirect "
-              "where the tool is resolved from (#1962 on both platforms; the "
+              "where the tool is resolved from (on both platforms; the "
               "decoy exists, so this cannot pass vacuously)")
 
     if FAILURES:

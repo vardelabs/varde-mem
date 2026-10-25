@@ -243,7 +243,7 @@ def _log(msg: str) -> None:
     """Stderr, because this gate keeps no log file. It exists so an unresolvable
     home is VISIBLE: "could not determine where to look" and "nothing is
     configured" are different states, and silently reporting the first as the
-    second is the conflation agent_home was written to end (#2310)."""
+    second is the conflation agent_home was written to end."""
     try:
         sys.stderr.write("[" + HOOK_NAME + "] " + msg + "\n")
     except Exception:
@@ -254,7 +254,7 @@ def load_config() -> dict:
     """Per-tenant opt-in config. PURE READ of config: never writes or mkdirs.
 
     It DOES log once (to stderr, via _log) when the home cannot be resolved, so
-    that state is visible rather than read as "nothing configured" (#2310); that
+    that state is visible rather than read as "nothing configured"; that
     is the whole reason agent_home takes a `log`.
 
     Returns the usable opt-in dict, or {} when there is no usable config (absent,

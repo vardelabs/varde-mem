@@ -117,8 +117,8 @@ The budget is a set of `O_EXCL` slot files, so two overlapping Stop processes
 for one session cannot both block.
 
 OPT-IN PER TENANT with a config under the trusted (passwd/token) home at
-`<home>/.config/journal/journal-entry.json`, never derived from `$HOME`
-(#2310); set an absolute `$JOURNAL_CONFIG_DIR` to place it elsewhere. See
+`<home>/.config/journal/journal-entry.json`, never derived from `$HOME`;
+set an absolute `$JOURNAL_CONFIG_DIR` to place it elsewhere. See
 `journal-entry.config.example.json`. Disable by naming `enforce-journal-entry`
 in `$JOURNAL_DISABLED` (the legacy `$HARNESS_MANAGEMENT_DISABLED` is honored).
 
@@ -151,7 +151,7 @@ CONFIG_FILE = "journal-entry.json"
 # Per-tenant config location. An absolute $JOURNAL_CONFIG_DIR overrides the
 # default so a tenant is not forced to write under the PASSWD home; else
 # <trusted home>/.config/journal, so config is disk-located, never
-# derived from a spoofable $HOME (see #2310).
+# derived from a spoofable $HOME.
 CONFIG_DIR_ENV = "JOURNAL_CONFIG_DIR"
 STATE_DIR = Path.home() / ".local/state/journal"
 LOG_DIR = Path.home() / ".local/log"
@@ -255,7 +255,7 @@ def load_config() -> "dict | None":
 
     PURE READ of config: never writes or mkdirs. It DOES log once when the home
     cannot be resolved, so that state is visible ("could not determine where to
-    look") rather than silently read as "nothing configured" (#2310). That is
+    look") rather than silently read as "nothing configured". That is
     the whole reason agent_home takes a `log`."""
     base = env_override_or_home(CONFIG_DIR_ENV, ".config", "journal", log=log)
     if base is None:
@@ -522,7 +522,7 @@ def _trust_file_path():
     OS, never `$HOME` / `%USERPROFILE%`, which the walked tree could itself
     have set.
 
-    WINDOWS (#2301). Reading the passwd entry directly returned None whenever
+    WINDOWS. Reading the passwd entry directly returned None whenever
     `pwd` was missing, which on Windows is always, so no trust file was ever
     found and the whole gate was a permanent silent no-op on a real operator
     machine. `agent_home.trusted_home()` answers on both platforms from the
