@@ -49,7 +49,7 @@ def run(payload, home, env=None, timeout=5):
     """Run the hook; return (denied: bool, reason: str). A hang is a FAILURE."""
     e = dict(os.environ)
     e["HOME"] = str(home)
-    # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from $HOME
+    # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from $HOME.
     # Point it at the throwaway home's config dir so the suite stays
     # hermetic and never reads the developer's real config.
     e["JOURNAL_CONFIG_DIR"] = str(Path(home) / CFG_DIR)
