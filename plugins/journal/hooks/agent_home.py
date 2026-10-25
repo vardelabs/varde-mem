@@ -2,8 +2,8 @@
 """The user's home directory, resolved from the OS rather than the environment.
 
 ONE implementation, shared by every hook that needs a trustworthy home. Split
-out of `preload-spine.py` by #2301, where the Windows half was written for
-#2296; `enforce-journal-entry.py` needed the identical primitive and copying
+out of `preload-spine.py`, where the Windows half was first written, because
+`enforce-journal-entry.py` needed the identical primitive and copying
 forty lines of pinned ctypes signatures into a second file is how the two
 drift apart.
 
@@ -12,7 +12,7 @@ on POSIX, `%USERPROFILE%` then `%HOMEDRIVE%%HOMEPATH%` on Windows. Every hook
 here can be started by a session whose cwd is an untrusted repo, and a
 direnv-loaded `.envrc`, a devcontainer, or a shell profile sets environment
 variables trivially. The attack is never "change what your home directory
-contains", it is "change where home POINTS" (#1962, reproduced before it
+contains", it is "change where home POINTS" (reproduced before the fix
 shipped). A hook that resolves a trust config, or an executable, through a
 redirectable home hands the walked tree control of the thing meant to gate it.
 
@@ -23,7 +23,7 @@ reads `ProfileImagePath` for the calling token's SID and expands nothing.
 attempt at the Windows half: `FOLDERID_LocalAppData` resolves through the
 `User Shell Folders` registry value `%USERPROFILE%\\AppData\\Local`, a
 REG_EXPAND_SZ the API expands against the CALLING PROCESS's environment, so a
-poisoned `%USERPROFILE%` moves it. That reopened #1962 on a second platform,
+poisoned `%USERPROFILE%` moves it. That reopened the home redirect on a second platform,
 and it measured clean only because the test poisoned to a path that did not
 exist while `KF_FLAG_DEFAULT` verifies existence, which turned a live redirect
 into a failed call.

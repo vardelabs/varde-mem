@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Preload the EPISODIC SPINE into context (#1526, split out of the combined
-preload-session-cache.py by issue #1846).
+"""Preload the EPISODIC SPINE into context (split out of the combined
+preload-session-cache.py).
 
 A bounded pass over the vault's Journal via `vardemem read` --
 a decayed index: recent days verbatim, ancient ones collapsed into rollups.
@@ -12,7 +12,7 @@ shape the spine ran inside the cache hook before those gates for exactly this
 reason; as its own hook it fires on every session regardless of what the
 cache hook decides, which is the same guarantee with no ordering dependency.
 
-STATIC BUDGET (#1846). This hook and the cache hook can no longer see each
+STATIC BUDGET. This hook and the cache hook can no longer see each
 other's payloads, so the old dynamic `spine_allowance = INLINE_SAFE_CAP -
 HEADER_RESERVE - LIVE_WORST_CASE` negotiation is replaced by fixed shares:
 the spine owns SPINE_BUDGET bytes of context, the cache hook owns the rest,
@@ -28,7 +28,7 @@ RESOLUTION   The installed `vardemem` binary is resolved from a fixed list of
              /usr/local/bin, /opt/homebrew/bin, /usr/bin. On Windows it is
              `AppData\\Local\\Programs\\vardemem` then `.local\\bin` under the
              profile root read from the PROCESS TOKEN, and the filename
-             `vardemem.py` is accepted alongside `vardemem` (#2296). The
+             `vardemem.py` is accepted alongside `vardemem`. The
              session's cwd selects WHICH journal vardemem reads (it walks up
              from cwd for `.vardemem.json`), not which binary runs.
 Budget       The spine claims at most SPINE_BUDGET bytes (see STATIC BUDGET).
@@ -231,8 +231,8 @@ def resolve_vault() -> Path | None:
         return None
 
 
-# The token-derived home lives in `agent_home` (#2301). It was written here
-# for #2296, then `enforce-journal-entry` needed the identical primitive:
+# The token-derived home lives in `agent_home`. It was written here
+# first, then `enforce-journal-entry` needed the identical primitive:
 # copying forty lines of pinned ctypes signatures into a second hook is how
 # two copies of a security boundary drift apart. See that module for why no
 # environment variable is read and why SHGetKnownFolderPath is not enough.
@@ -491,7 +491,7 @@ def _fence_untrusted(body: str, token: str) -> str:
     property is that an attacker crafting a Journal entry in advance cannot
     predict it, not a positional trick, so no per-line marking is needed
     and the byte cost stays fixed and small -- this file's byte budget has
-    no room for marking every line (#1962 thread: the structural sanitizer
+    no room for marking every line (the structural sanitizer
     defends markdown shape, not plain instruction-shaped prose; this is the
     second, complementary control for that gap, not a replacement for it).
 
@@ -548,7 +548,7 @@ def _sanitize_spine_content(text: str) -> str:
     ordinary Journal prose or growing the text; the guard sentence in
     `build_spine_block`'s header and the harness-enforced containment fence
     around this whole block are the controls for THAT threat, not this
-    function. Flagged, not solved here (#1962 thread).
+    function. Flagged, not solved here.
 
     NEVER GROWS the byte length -- this is load-bearing, not incidental: the
     caller (`build_spine_block`) runs this BEFORE `_fit_spine`'s byte-budget
@@ -784,7 +784,7 @@ def resolve_cwd(payload):
 def emit(event: str, context: str) -> None:
     """Write the hook's one JSON line, hard-capped to SPINE_BUDGET. The one
     choke point every path shares, so no path can exceed the hook's static
-    share of the combined inline budget (#1846)."""
+    share of the combined inline budget."""
     output = {"hookSpecificOutput": {"hookEventName": event,
                                      "additionalContext": _hard_cap(context)}}
     sys.stdout.write(json.dumps(output))
@@ -845,7 +845,7 @@ if __name__ == "__main__":
         try:
             sys.stderr.write(
                 "[journal] preload-spine.py: unexpected error (%r), "
-                "session starts with NO episodic spine (fail-open, #1383)\n" % e)
+                "session starts with NO episodic spine (fail-open)\n" % e)
         except Exception:
             pass
         sys.exit(0)

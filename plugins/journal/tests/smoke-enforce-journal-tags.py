@@ -49,8 +49,8 @@ def run(payload, home, env=None, timeout=5):
     """Run the hook; return (denied: bool, reason: str). A hang is a FAILURE."""
     e = dict(os.environ)
     e["HOME"] = str(home)
-    # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from $HOME
-    # (see #2310). Point it at the throwaway home's config dir so the suite stays
+    # Config is disk-located via $JOURNAL_CONFIG_DIR now, not derived from $HOME.
+    # Point it at the throwaway home's config dir so the suite stays
     # hermetic and never reads the developer's real config.
     e["JOURNAL_CONFIG_DIR"] = str(Path(home) / CFG_DIR)
     e.pop("JOURNAL_DISABLED", None)
@@ -254,7 +254,7 @@ with tempfile.TemporaryDirectory() as tmp:
     check("custom dir REPLACES the default (Daily Notes now silent)",
           run(w(UNTAGGED), home)[0] is False)
 
-    # #2310 guard: config is disk-located via $JOURNAL_CONFIG_DIR, never derived
+    # Guard: config is disk-located via $JOURNAL_CONFIG_DIR, never derived
     # from $HOME. An enabled config under a spoofed $HOME must not deny when the
     # absolute override points at a dir that has none.
     spoof = home / "attacker-home"
@@ -587,7 +587,7 @@ with tempfile.TemporaryDirectory() as tmp:
             os.environ["HOME"] = _saved_home
 
     if os.name != "nt":
-        # Visibility (#2310): an unresolvable home must be RECORDED, not silently
+        # Visibility: an unresolvable home must be RECORDED, not silently
         # read as "nothing configured". Drive the real trusted_home failure path
         # (pwd.getpwuid raising) with no override, and assert load_config no-ops
         # AND logs. Fails if load_config drops the log= it passes.
