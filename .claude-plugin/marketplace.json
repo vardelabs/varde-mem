@@ -11,7 +11,7 @@
       "name": "journal",
       "source": "./plugins/journal",
       "description": "Hooks that keep a VardeMem journal non-empty and well-formed, load the bounded read at session start, and remind when a journal line is owed.",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "author": {
         "name": "Varde Labs"
       }
