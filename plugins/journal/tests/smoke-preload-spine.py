@@ -64,6 +64,8 @@ Covers, in order:
                              nothing, forever, silently), and NO env var
                              spelling of "home" can redirect the search on
                              either platform
+ 25. event wiring         -- hooks.json registers the hook on SessionStart
+                             only, and every reply names SessionStart
 
 The `3a`-`3g` cases that stood here covered the Git-worktree allowlist that
 resolved a spine script by walking up from the cwd. The home-redirect fix deleted that machinery
