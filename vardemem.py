@@ -111,9 +111,16 @@ def _trusted_home_dir():
     if pwd is None:
         return None
     try:
-        return pwd.getpwuid(os.getuid()).pw_dir
+        home = pwd.getpwuid(os.getuid()).pw_dir
     except (KeyError, OSError, AttributeError):
         return None
+    # An empty or relative passwd home resolves against the cwd, the walk
+    # target; callers test `is None`, so it must not reach them as "". Plain
+    # `isabs` is enough: this line is reached only where `pwd` exists, which
+    # excludes Windows and its drive-relative shapes.
+    if not os.path.isabs(home):
+        return None
+    return home
 
 
 def _trust_file_path():
@@ -3884,9 +3891,35 @@ def cmd_selftest(args):
           "Ctrl-C during a run exits 130, not a bare traceback")
 
     _selftest_owed(check)
+    _selftest_passwd_home(check)
 
     print("\n%s" % ("ALL PASS" if not fails else "%d FAILED" % len(fails)))
     sys.exit(1 if fails else 0)
+
+
+def _selftest_passwd_home(check):
+    """The trust file must not resolve under the cwd when the passwd home
+    field is empty or relative. The passwd entry is stubbed in process, so
+    the real account is never read."""
+    global pwd
+    import types
+    print("passwd home (stubbed passwd entry):")
+    if os.name == "nt":
+        print("  skip: the passwd lookup is POSIX only")
+        return
+    real_pwd, saved_override = pwd, os.environ.pop(TRUST_FILE_ENV, None)
+    try:
+        for pw_dir, want in (("", None), ("relative/home", None),
+                             ("/home/example-agent",
+                              Path("/home/example-agent/.config/vardemem/trust.json"))):
+            entry = types.SimpleNamespace(pw_dir=pw_dir)
+            pwd = types.SimpleNamespace(getpwuid=lambda _uid, e=entry: e)
+            check(_trust_file_path() == want,
+                  "passwd home %r gives trust file %r" % (pw_dir, want))
+    finally:
+        pwd = real_pwd
+        if saved_override is not None:
+            os.environ[TRUST_FILE_ENV] = saved_override
 
 
 def _selftest_owed(check):

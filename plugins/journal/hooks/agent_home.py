@@ -150,7 +150,7 @@ def trusted_home(log=None):
         _CACHED = _windows_profile_dir(log)
         return _CACHED
     try:
-        _CACHED = pwd.getpwuid(os.getuid()).pw_dir
+        home = pwd.getpwuid(os.getuid()).pw_dir
     except (KeyError, OSError, AttributeError) as exc:
         # AttributeError: `pwd.getpwuid` is looked up before `os.getuid()` is
         # called, so a None `pwd` (import failed) raises here first.
@@ -159,6 +159,13 @@ def trusted_home(log=None):
         # and a caller that cannot tell them apart reports the wrong one.
         if log:
             log(f"agent_home: no passwd entry for this uid ({exc!r})")
-        _CACHED = None
+        home = None
+    # An empty or relative passwd home resolves against the cwd, which can be
+    # the walked tree; callers test `is None`, so it must not reach them as "".
+    if home is not None and not _is_truly_absolute(home):
+        if log:
+            log(f"agent_home: passwd home {home!r} is not absolute")
+        home = None
+    _CACHED = home
     return _CACHED
 
