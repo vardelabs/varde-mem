@@ -44,9 +44,11 @@ Disable with `preload-spine` named in $JOURNAL_DISABLED (the legacy
 $HARNESS_MANAGEMENT_DISABLED is still honored) -- the escape hatch for a
 spine-less host.
 
-Hook input: JSON on stdin (SessionStart / PostCompact payload; only
-hook_event_name is read, and a malformed payload degrades to SessionStart).
-Hook output: JSON on stdout with additionalContext, echoing the firing event;
+Hook input: JSON on stdin (SessionStart payload; only cwd is read).
+SessionStart also fires after a compaction, with source `compact`, so the
+spine re-orients a compacted session without a PostCompact registration. The
+harness rejects hookSpecificOutput from PostCompact.
+Hook output: JSON on stdout with additionalContext for SessionStart;
 always exit 0 (fail open -- this hook must never crash session start or the
 post-compact resume).
 """
@@ -751,18 +753,7 @@ def build_spine_block(cwd, allowance: int, outer_deadline: float) -> str:
         return ""
 
 
-def resolve_event(payload) -> str:
-    """The firing hook event, echoed back in hookSpecificOutput.
-
-    This hook serves BOTH SessionStart (fresh session) and PostCompact (the
-    re-orientation half of compaction handling): in both cases the spine is part
-    of what re-orients the session, so the action is identical. Echoes whichever
-    event fired; a malformed payload degrades to SessionStart."""
-    if isinstance(payload, dict):
-        evt = payload.get("hook_event_name")
-        if isinstance(evt, str) and evt in ("SessionStart", "PostCompact"):
-            return evt
-    return "SessionStart"
+EVENT = "SessionStart"
 
 
 def resolve_cwd(payload):
@@ -781,11 +772,11 @@ def resolve_cwd(payload):
         return None
 
 
-def emit(event: str, context: str) -> None:
+def emit(context: str) -> None:
     """Write the hook's one JSON line, hard-capped to SPINE_BUDGET. The one
     choke point every path shares, so no path can exceed the hook's static
     share of the combined inline budget."""
-    output = {"hookSpecificOutput": {"hookEventName": event,
+    output = {"hookSpecificOutput": {"hookEventName": EVENT,
                                      "additionalContext": _hard_cap(context)}}
     sys.stdout.write(json.dumps(output))
     sys.stdout.flush()
@@ -809,14 +800,13 @@ def _hard_cap(text: str) -> str:
 
 def main() -> int:
     started = time.monotonic()
-    # Read stdin (SessionStart / PostCompact payload) so the pipe never blocks.
+    # Read stdin (the SessionStart payload) so the pipe never blocks.
     payload = None
     try:
         raw = sys.stdin.read()
         payload = json.loads(raw) if raw.strip() else None
     except Exception:
         payload = None
-    event = resolve_event(payload)
     cwd = resolve_cwd(payload)
 
     if _disabled():
@@ -829,7 +819,7 @@ def main() -> int:
     # the reason the split keeps it a hook of its own.
     block_out = build_spine_block(cwd, SPINE_BUDGET, started + HOOK_BUDGET)
     if block_out:
-        emit(event, block_out)
+        emit(block_out)
     return 0
 
 

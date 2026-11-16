@@ -256,6 +256,10 @@ _OVERRIDE_RUNNER = (
 )
 
 
+# Every hookEventName the hook printed in this run, checked once at the end.
+EMITTED_EVENTS = set()
+
+
 def run_hook(cwd, vault=None, slug="example-operator", disabled="preload-live-github", event="SessionStart",
              extra_path=None, env_overrides=None, home=None, journal_disabled=""):
     """Run the hook and return (returncode, additionalContext). The live-GitHub
@@ -302,7 +306,9 @@ def run_hook(cwd, vault=None, slug="example-operator", disabled="preload-live-gi
     )
     ctx = ""
     if proc.stdout.strip():
-        ctx = json.loads(proc.stdout)["hookSpecificOutput"]["additionalContext"]
+        out = json.loads(proc.stdout)["hookSpecificOutput"]
+        EMITTED_EVENTS.add(out["hookEventName"])
+        ctx = out["additionalContext"]
     return proc.returncode, ctx
 
 
@@ -556,11 +562,15 @@ def main():
         check(rc == 0 and SPINE_MARK not in ctx,
               "9 legacy switch: `preload-session-cache` still suppresses the spine")
 
-        # PostCompact is the same hook and the same need: the auto-summary drops
-        # context, and the spine is part of what re-orients.
+        # After a compaction the harness fires SessionStart with source `compact`.
+        # The spine re-orients the session then too, and the reply names SessionStart.
+        rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home)
+        check(rc == 0 and SPINE_MARK in ctx, "9 compact: the spine is injected on SessionStart")
+        # A payload naming another event still gets a SessionStart reply; case 25
+        # checks every reply's event name.
         rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home,
                            event="PostCompact")
-        check(rc == 0 and SPINE_MARK in ctx, "9 PostCompact: the spine is injected too")
+        check(rc == 0 and SPINE_MARK in ctx, "9 a PostCompact payload still gets the spine")
 
         # --- 10. _fit_spine's OWN clamp holds even when the HEAD alone --------
         # overruns `allowance`. Before this fix, `room` going negative left the
@@ -1008,7 +1018,7 @@ def main():
         real_stdout_18 = sys.stdout
         sys.stdout = capture18
         try:
-            hook_mod.emit("SessionStart", "L" * (hook_mod.SPINE_BUDGET + 2000))
+            hook_mod.emit("L" * (hook_mod.SPINE_BUDGET + 2000))
         finally:
             sys.stdout = real_stdout_18
         ctx18 = json.loads(capture18.getvalue())["hookSpecificOutput"]["additionalContext"]
@@ -1256,6 +1266,17 @@ def main():
               "24d an EXISTING attacker-controlled home does not redirect "
               "where the tool is resolved from (on both platforms; the "
               "decoy exists, so this cannot pass vacuously)")
+
+    # --- 25. event wiring: the harness rejects hookSpecificOutput from ---------
+    # PostCompact, and SessionStart already fires after a compaction.
+    wiring = json.loads((HOOK.parent / "hooks.json").read_text(encoding="utf-8"))["hooks"]
+    spine_events = sorted(event for event, groups in wiring.items()
+                          for group in groups for hook in group["hooks"]
+                          if "preload-spine.py" in hook["command"])
+    check(spine_events == ["SessionStart"],
+          "25 hooks.json registers preload-spine on SessionStart only (got %s)" % spine_events)
+    check(EMITTED_EVENTS == {"SessionStart"},
+          "25 every reply this run names SessionStart (got %s)" % sorted(EMITTED_EVENTS))
 
     if FAILURES:
         print(f"\n---- FAIL: {len(FAILURES)} failed ----")
