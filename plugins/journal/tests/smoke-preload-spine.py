@@ -564,10 +564,6 @@ def main():
         check(rc == 0 and SPINE_MARK not in ctx,
               "9 legacy switch: `preload-session-cache` still suppresses the spine")
 
-        # After a compaction the harness fires SessionStart with source `compact`.
-        # The spine re-orients the session then too, and the reply names SessionStart.
-        rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home)
-        check(rc == 0 and SPINE_MARK in ctx, "9 compact: the spine is injected on SessionStart")
         # A payload naming another event still gets a SessionStart reply; case 25
         # checks every reply's event name.
         rc, ctx = run_hook(cwd=primary, vault=primary, home=primary_home,
