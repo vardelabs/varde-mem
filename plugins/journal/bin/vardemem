@@ -2362,13 +2362,25 @@ def _append_entry(root, target, home, text):
 def _replace_file(target, text):
     """Write `text` to a fresh file beside `target`, then rename it over.
     mkstemp creates the file exclusively, so a link planted at the temporary
-    name cannot redirect the write."""
+    name cannot redirect the write. It also makes the file 0600, so the file
+    takes the target's mode, or the umask default for a new file, before the
+    rename: a shared tree must stay readable to the accounts that read it."""
     import tempfile
+    try:
+        mode = _stat.S_IMODE(target.stat().st_mode)
+    except FileNotFoundError:
+        umask = os.umask(0)
+        os.umask(umask)
+        mode = 0o666 & ~umask
+    except OSError as e:
+        die("Could not read the mode of %s: %s" % (target, e))
     try:
         fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".%s." % target.name)
     except OSError as e:
         die("Could not write beside %s: %s" % (target, e))
     try:
+        if hasattr(os, "fchmod"):
+            os.fchmod(fd, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as out:
             out.write(text)
         os.replace(tmp, target)
@@ -4212,6 +4224,11 @@ def _selftest_rules(check):
         check(rc == 0 and rc2 == 0 and "Already recorded" in out2
               and rule_file.read_text(encoding="utf-8").count(ENTRY) == 1,
               "an agent rule is written once; a restatement is not a second entry")
+        if os.name != "nt":
+            rule_file.chmod(0o644)
+            run("rule", "agent-rule", "Keep the file mode.")
+            check(_stat.S_IMODE(rule_file.stat().st_mode) == 0o644,
+                  "a rule write keeps the home file's mode")
         rc, out = run("rules")
         check(rc == 0 and "== agent-rules" in out and "- Read the README first." in out,
               "`rules` reads the entry back")
