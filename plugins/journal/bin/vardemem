@@ -2320,9 +2320,13 @@ def _home_file(root, home):
 def _append_entry(root, target, home, text):
     """Add one entry line, or say it is already there. Returns the message."""
     # The config is locked, not a new file: a lock file would sit in the tree.
-    with open(root / CONFIG_NAME, "a") as held:
+    try:
+        held = open(root / CONFIG_NAME, "rb")
         if fcntl is not None:
             fcntl.flock(held, fcntl.LOCK_EX)
+    except OSError as e:
+        die("Could not lock %s: %s" % (root / CONFIG_NAME, e))
+    with held:
         try:
             old = target.read_text(encoding="utf-8") if target.exists() else ""
         except (OSError, ValueError) as e:
