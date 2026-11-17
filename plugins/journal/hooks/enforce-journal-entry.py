@@ -25,8 +25,8 @@ to hold "block a given Stop at most once" when `max_blocks_per_session > 1`
 and the hook runs in overlapping processes. If the promise detector is ever
 built and a single-block-per-Stop guarantee ACROSS two gates is wanted,
 extract the reader and ledger THEN, as an installed, securely-resolved module
-both hooks import from a fixed trusted path (the `vardemem`-binary resolution
-pattern), and let that hook's real needs shape the interface.
+both hooks import from a fixed trusted path, the way the hooks find the
+bundled `vardemem`, and let that hook's real needs shape the interface.
 
 WHAT COUNTS AS SUBSTANTIVE WORK (bias: do not fire).
 ----------------------------------------------------

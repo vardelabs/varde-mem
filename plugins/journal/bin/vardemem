@@ -2302,8 +2302,9 @@ def _entry_key(text):
     return " ".join(text.split()).casefold()
 
 
-def _home_file(root, home):
-    """The tree home's file, refused when a link carries it out of the tree."""
+def _home_file(root, home, writing=True):
+    """The tree home's file, refused when a link carries it out of the tree.
+    A read takes a home whose folder does not exist yet as one with no entries."""
     target = root / home.file
     try:
         inside = target.resolve().is_relative_to(root.resolve())
@@ -2311,7 +2312,7 @@ def _home_file(root, home):
         die("Could not resolve %s: %s" % (target, e))
     if not inside:
         die("%s leaves %s, so it is not a home in this tree." % (target, root))
-    if not target.parent.is_dir():
+    if writing and not target.parent.is_dir():
         die("%s does not exist. Create it, then record the rule."
             % target.parent)
     return target
@@ -2393,7 +2394,7 @@ def cmd_rules(args):
     for home in homes.values():
         if home.repo:
             continue
-        target = _home_file(root, home)
+        target = _home_file(root, home, writing=False)
         try:
             entries = [line for line in target.read_text(encoding="utf-8").splitlines()
                        if line.startswith(ENTRY)] if target.exists() else []
@@ -4162,6 +4163,11 @@ def _selftest_rules(check):
         rc, out = run("rules")
         check(rc == 0 and "== agent-rules" in out and "- Read the README first." in out,
               "`rules` reads the entry back")
+        configure(dict(homes, later={"kinds": ["fact"], "file": "Later/facts.md"}))
+        rc, out = run("rules")
+        check(rc == 0 and "- Read the README first." in out,
+              "`rules` reads past a home whose folder does not exist yet")
+        configure(homes)
         rc, out = run("rule", "no-such-kind", "x")
         check(rc == 1 and "agent-rule" in out, "an undeclared kind lists the declared ones")
         configure(dict(homes, more={"kinds": ["agent-rule"], "file": "Rules/more.md"}))
