@@ -2,17 +2,18 @@
 r"""Smoke test for the EPISODIC SPINE phase of preload-session-cache.py.
 
 Runs the SessionStart hook as a subprocess against throwaway trees, with a STUB
-`vardemem` installed where the resolver looks, so every assertion is about the
+`vardemem` the resolver is pointed at, so every assertion is about the
 hook's behaviour and none of them depends on a real journal's content.
 
 The stub honours `--budget N` the way the real tool does (fewer, denser lines),
 which is what lets the compression pass be exercised without a real vault.
 
 Covers, in order:
-  1. injected at all      -- content in context, from an INSTALLED command
+  1. injected at all      -- content in context, from the resolved tool
+  1b. bundled copy        -- the real resolver returns the plugin's own copy
   2. which journal        -- the session's cwd decides, and the TOOL decides it
   3k. PATH-shadowed tool  -- a fake `vardemem` earlier on $PATH is never run
-  3l. no install          -- FAILS CLOSED, never falls back to a $PATH search
+  3l. no tool             -- FAILS CLOSED, never falls back to a $PATH search
   3m. $HOME               -- cannot move where the tool is resolved from, since
                              an untrusted repo sets it as easily as $PATH
   3n. silence's key       -- keyed on the TOOL's exit code, not on a stat of
@@ -59,17 +60,14 @@ Covers, in order:
  23. top-level fail-open  -- a main() crash surfaces one (fail-open)
                              stderr note and still exits 0, not a silent
                              swallow
- 24. platform branch      -- Windows resolves real Windows directories instead
-                             of falling into the POSIX list (where it resolved
-                             nothing, forever, silently), and NO env var
-                             spelling of "home" can redirect the search on
-                             either platform
+ 24. poisoned env         -- a decoy HOME and PATH still resolve the
+                             bundled copy
  25. event wiring         -- hooks.json registers the hook on SessionStart
                              only, and every reply names SessionStart
 
 The `3a`-`3g` cases that stood here covered the Git-worktree allowlist that
 resolved a spine script by walking up from the cwd. The home-redirect fix deleted that machinery
-along with the walk; the binary is now resolved from a fixed list of directories.
+along with the walk; the tool is now the copy bundled beside the hook.
 `3k`-`3n` are what guards it instead.
 
 Usage: python3 tests/smoke-preload-spine.py   (exit 0 = all pass)
@@ -88,12 +86,11 @@ from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "preload-spine.py"
 CACHE_REL = "Operations/Session Cache/Discord/DM"
-# The tool is INSTALLED now, so a fixture mirrors the real install layout
-# under a throwaway root: `<root>/.local/bin/vardemem`. NOT under the real
-# $HOME -- see run_hook's own comment on why that env var is never the seam.
-# make_home builds this path; _OVERRIDE_RUNNER substitutes the search-dirs
-# FUNCTION so `resolve_vardemem`'s real `os.path.isfile`/`os.access` logic
-# still runs, against this one throwaway directory instead of the real ones.
+# The plugin's own copy of the tool, which the real resolver returns.
+BUNDLED = HOOK.parent.parent / "bin" / "vardemem"
+# A fixture tool lives under a throwaway root, and _OVERRIDE_RUNNER points the
+# resolver at it. NOT the real $HOME: see run_hook on why an env var is never
+# the seam.
 VARDEMEM_REL = ".local/bin/vardemem"
 INLINE_SAFE_CAP = 9 * 1024
 SPINE_BUDGET = 4 * 1024  # the spine hook's static share
@@ -239,7 +236,7 @@ def make_vault(root: Path, cache="in-flight state here"):
 
 
 def make_home(root: Path, install=True, src=None):
-    """A HOME with (or without) the tool installed where the resolver looks."""
+    """A root with (or without) a fixture tool for the resolver to run."""
     (root / ".local" / "bin").mkdir(parents=True, exist_ok=True)
     if install:
         exe = root / VARDEMEM_REL
@@ -249,11 +246,12 @@ def make_home(root: Path, install=True, src=None):
 
 
 _OVERRIDE_RUNNER = (
-    "import importlib.util, sys\n"
+    "import importlib.util, os, sys\n"
     "spec = importlib.util.spec_from_file_location('h', sys.argv[1])\n"
     "m = importlib.util.module_from_spec(spec)\n"
     "spec.loader.exec_module(m)\n"
-    "m._vardemem_search_dirs = lambda d=sys.argv[2]: (d,)\n"
+    "tool = os.path.join(sys.argv[2], 'vardemem')\n"
+    "m.resolve_vardemem = lambda: tool if os.path.isfile(tool) else None\n"
     "sys.exit(m.main())\n"
 )
 
@@ -285,7 +283,7 @@ def run_hook(cwd, vault=None, slug="example-operator", disabled="preload-live-gi
     if journal_disabled:
         env["JOURNAL_DISABLED"] = journal_disabled
     # NOT $HOME. The resolver reads the passwd entry precisely because $HOME is
-    # settable by the same untrusted repo the fixed list defends against, and an
+    # settable by the same untrusted repo the resolver defends against, and an
     # env-var test seam would be that exploit wearing a lab coat.
     # The seam is a function override, applied in the child before main() runs.
     if extra_path:
@@ -295,9 +293,9 @@ def run_hook(cwd, vault=None, slug="example-operator", disabled="preload-live-gi
     if home is None:
         argv = [sys.executable, str(HOOK)]
     else:
-        # Load the hook as a module, override where it looks for the tool, then
-        # run its main(). Still a real subprocess with real stdin and stdout;
-        # only the search list is substituted.
+        # Load the hook as a module, point it at the fixture tool, then run its
+        # main(). Still a real subprocess with real stdin and stdout; only the
+        # resolver is substituted.
         argv = [sys.executable, "-c", _OVERRIDE_RUNNER, str(HOOK),
                 str(Path(home) / ".local" / "bin")]
     proc = subprocess.run(
@@ -327,9 +325,9 @@ def main():
         # Cases 2 and 3, and 3a through 3j, are gone with the cwd walk and the
         # git-worktree trust check they existed to test. Nothing walks
         # into an arbitrary repo any more, so there is no untrusted candidate
-        # to refuse. What replaces them is case 3k below: the tool is resolved
-        # from a fixed list of directories rather than $PATH, so a poisoned
-        # PATH cannot substitute a binary.
+        # to refuse. What replaces them is case 3k below: the tool is the
+        # plugin's own copy, never a $PATH lookup, so a poisoned PATH cannot
+        # substitute a binary.
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             vault = make_vault(root / "vault")
@@ -339,46 +337,21 @@ def main():
             check("EPISODIC SPINE" in ctx, "1 spine block injected")
             check("STUB-SPINE-READ" in ctx, "1 the installed tool ran")
 
-        # --- 1b. production resolver is exercised without a test seam --------
-        # The fixture override above isolates the test tool. This direct import
-        # catches dropped platform imports such as `pwd`, before the fail-open
-        # outer handler can hide them. If this host has vardemem installed, also
-        # run the actual hook without replacing its resolver.
+        # --- 1b. the real resolver returns the plugin's bundled copy ---------
         spec = importlib.util.spec_from_file_location("preload_spine_real", HOOK)
         real = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(real)
-        try:
-            fixed_dirs = real._vardemem_search_dirs()
-            check(bool(fixed_dirs), "1b production resolver returns fixed directories")
-        except Exception as exc:
-            check(False, f"1b production resolver does not raise: {exc}")
+        check(real.resolve_vardemem() == str(BUNDLED),
+              "1b the resolver returns the vardemem bundled in the plugin")
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             vault = make_vault(root / "vault")
-            real_tool = real.resolve_vardemem()
-            # The `$HOME` seam below only redirects the log on POSIX. On
-            # Windows `Path.home()` consults `%USERPROFILE%` first, so
-            # `LOG_FILE` still lands in the operator's real home and this read
-            # raises FileNotFoundError. That was invisible until the Windows fix made
-            # `resolve_vardemem()` capable of returning a tool on Windows at
-            # all, which is what first made this branch reachable there.
-            # It belongs with the LOG_FILE derivation itself; skipped
-            # rather than silently weakened, so the POSIX coverage is unchanged.
-            if real_tool and os.name == "nt":
-                print("skip 1b log assertion on Windows: $HOME does not move "
-                      "Path.home() there")
-            elif real_tool:
-                (vault / "Operations" / "Activity" / "Journal").mkdir(parents=True)
-                log_home = root / "log-home"
-                log_home.mkdir()
-                rc, ctx = run_hook(vault, vault=vault,
-                                   env_overrides={"HOME": str(log_home)})
-                log_text = (log_home / ".local" / "log" / "preload-spine-hook.log").read_text(encoding="utf-8")
-                check(rc == 0, "1b unmodified hook exits 0")
-                check("name 'pwd' is not defined" not in log_text,
-                      "1b unmodified hook has no hidden resolver error")
-            else:
-                print("skip 1b unmodified subprocess: vardemem is not installed")
+            journal = vault / "Operations" / "Activity" / "Journal"
+            journal.mkdir(parents=True)
+            (journal / "2026-01-02.md").write_text("A synthetic day.\n", encoding="utf-8")
+            rc, ctx = run_hook(vault, vault=vault)
+            check(rc == 0 and SPINE_MARK in ctx,
+                  "1b the unmodified hook runs the bundled tool end to end")
 
         # --- 2. the cwd decides WHICH journal, and the tool decides it -------
         # The hook no longer resolves a vault at all: it runs the installed
@@ -400,9 +373,8 @@ def main():
 
         # --- 3k. a poisoned $PATH cannot substitute the tool -----------------
         # The walk's trust check is gone, but the need to trust what gets
-        # executed is not. `resolve_vardemem` searches a fixed list, never
-        # $PATH, for the reason the deleted `_trusted_git_path` gave about
-        # `git`: an untrusted repo's `.envrc` can prepend anything.
+        # executed is not. `resolve_vardemem` never consults $PATH, because an
+        # untrusted repo's `.envrc` can prepend anything.
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             vault = make_vault(root / "vault")
@@ -440,11 +412,9 @@ def main():
                   "3l it stays a clean no-op instead")
 
         # --- 3m. $HOME cannot move where the tool is resolved from ----------
-        # The first version of the fixed list called
-        # os.path.expanduser("~"), which reads $HOME. Every vector the
-        # docstring names sets environment variables, so a repo that sets HOME
-        # got arbitrary code executed at session start. Run WITHOUT the test
-        # seam, so this exercises the real resolver.
+        # A repo can set $HOME, so a resolver that read it would run that
+        # repo's code at session start. Run WITHOUT the test seam, so this
+        # exercises the real resolver.
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             vault = make_vault(root / "vault")
@@ -578,7 +548,7 @@ def main():
         # Loaded here now: the trust-check unit tests that used to load it
         # first went with the walk.
         hook_mod = _load_hook_module()
-        _real_search_dirs = hook_mod._vardemem_search_dirs
+        _real_resolver = hook_mod.resolve_vardemem
         fake_script = Path("/fake/vardemem")
 
         head_plus_trailers = ("H" * 6000) + "\n" + "\n".join(
@@ -631,8 +601,7 @@ def main():
             # installed. Driven directly because it needs a spent clock, not a
             # slow child.
             ok_home = make_home(root / "ok-home")
-            hook_mod._vardemem_search_dirs = lambda d=str(
-                (ok_home / VARDEMEM_REL).parent): (d,)
+            hook_mod.resolve_vardemem = lambda p=str(ok_home / VARDEMEM_REL): p
             # Direct call, not run_hook(): _disabled() reads THIS process's
             # real os.environ, so an ambient disable in EITHER var (the new
             # JOURNAL_DISABLED or the legacy HARNESS_MANAGEMENT_DISABLED) would
@@ -644,7 +613,7 @@ def main():
                 block = hook_mod.build_spine_block(
                     str(vault), 4096, time.monotonic() - 1.0)
             finally:
-                hook_mod._vardemem_search_dirs = _real_search_dirs
+                hook_mod.resolve_vardemem = _real_resolver
                 if _real_disabled is not None:
                     os.environ["HARNESS_MANAGEMENT_DISABLED"] = _real_disabled
                 if _real_jdisabled is not None:
@@ -715,9 +684,8 @@ def main():
         # against STUB_SPINE's 200-day output) exercises the harder of the
         # two paths, not just the trivial one.
         fence_budget_home = make_home(tmp / "fence-budget-home")
-        real_search_dirs_fb = hook_mod._vardemem_search_dirs
-        hook_mod._vardemem_search_dirs = lambda: (
-            str(fence_budget_home / ".local" / "bin"),)
+        real_resolver_fb = hook_mod.resolve_vardemem
+        hook_mod.resolve_vardemem = lambda p=str(fence_budget_home / VARDEMEM_REL): p
         # Same direct-call env leak as case 11: an ambient disable in EITHER
         # var would make build_spine_block return "" for every allowance below,
         # trivially passing the check. The 700 case returns "" regardless, under
@@ -741,7 +709,7 @@ def main():
                           "12 injection guard: build_spine_block at %d B "
                           "actually returns content, not a vacuous \"\"" % tight_allowance)
         finally:
-            hook_mod._vardemem_search_dirs = real_search_dirs_fb
+            hook_mod.resolve_vardemem = real_resolver_fb
             if _real_disabled_fb is not None:
                 os.environ["HARNESS_MANAGEMENT_DISABLED"] = _real_disabled_fb
             if _real_jdisabled_fb is not None:
@@ -1136,134 +1104,27 @@ def main():
     check("(fail-open)" in crash_out and "preload-spine.py" in crash_out,
           "23 and surfaces one fail-open note on stderr, not a silent swallow")
 
-    # --- 24. the platform branch resolves somewhere real, un-redirectably ---
-    # Windows fell into the `pwd`-missing fallback, which returns three POSIX
-    # paths. Those resolve to nothing there, so the hook was not "a host
-    # without a spine" but "a host that could never have one", silently. This
-    # pins the branch AND the property that makes it safe: the search dirs are
-    # never movable by an environment variable, on either platform.
-    spec24 = importlib.util.spec_from_file_location("preload_spine_plat", HOOK)
-    m24 = importlib.util.module_from_spec(spec24)
-    spec24.loader.exec_module(m24)
-    dirs24 = m24._vardemem_search_dirs()
-    names24 = m24._vardemem_names()
-
-    if os.name == "nt":
-        check(bool(dirs24), "24 Windows resolves at least one search directory")
-        check(not any(d.startswith("/") for d in dirs24),
-              "24 Windows returns no POSIX path (the old silent-no-op bug)")
-        check(names24 == ("vardemem", "vardemem.py"),
-              "24 Windows accepts the copied .py spelling, since symlinking "
-              "needs a privilege the host may not grant")
-    else:
-        check(names24 == ("vardemem",),
-              "24 POSIX still takes exactly the documented symlink name")
-        check("/usr/local/bin" in dirs24 and "/usr/bin" in dirs24,
-              "24 POSIX list is unchanged by the Windows branch")
-
-    # 24b. The Windows directory shape, exercised on EVERY platform. The merge
-    # gate runs on Linux, so an `os.name == "nt"` body runs zero times
-    # there; for a `.ci-relaxed` plugin the suite is the only gate, so the
-    # branch has to be reachable as a pure function or it is untested.
-    win_dirs = m24._windows_search_dirs(os.path.join("X:", "prof"))
-    check(len(win_dirs) == 2, "24b Windows shape yields exactly two dirs")
-    check(win_dirs[0].endswith(os.path.join(
-              "prof", "AppData", "Local", "Programs", "vardemem")),
-          "24b per-user Programs dir is first")
-    check(win_dirs[1].endswith(os.path.join("prof", ".local", "bin")),
-          "24b .local/bin is second")
-    check(all(d.startswith(os.path.join("X:", "prof")) for d in win_dirs),
-          "24b BOTH entries hang off the one token-derived root, so a single "
-          "trusted lookup covers the whole list")
-
-    # 24c. resolve_vardemem's loop: the `.py` spelling resolves, and DIRECTORY
-    # order outranks FILENAME order. Flipping the two loops is the classic
-    # transcription error for this shape and would silently invert the
-    # documented preference, so it is pinned rather than described.
-    with tempfile.TemporaryDirectory() as td24:
-        first, second = Path(td24) / "first", Path(td24) / "second"
-        first.mkdir(); second.mkdir()
-        real_dirs24, real_names24 = (m24._vardemem_search_dirs,
-                                     m24._vardemem_names)
-        try:
-            m24._vardemem_search_dirs = lambda: (str(first), str(second))
-            m24._vardemem_names = lambda: ("vardemem", "vardemem.py")
-
-            # Only the `.py` spelling exists, and only in the second dir.
-            py_only = second / "vardemem.py"
-            py_only.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-            py_only.chmod(0o755)
-            check(m24.resolve_vardemem() == str(py_only),
-                  "24c the copied .py spelling resolves (the realistic Windows "
-                  "install, since symlinking needs a privilege)")
-
-            # Now the LATER-named spelling sits in the EARLIER directory.
-            # Directory order must win.
-            bare_first = first / "vardemem"
-            bare_first.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-            bare_first.chmod(0o755)
-            check(m24.resolve_vardemem() == str(bare_first),
-                  "24c directory order outranks filename order")
-
-            # And within one directory, the bare name is preferred.
-            py_first = first / "vardemem.py"
-            py_first.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
-            py_first.chmod(0o755)
-            check(m24.resolve_vardemem() == str(bare_first),
-                  "24c within a directory the bare name still wins")
-        finally:
-            m24._vardemem_search_dirs = real_dirs24
-            m24._vardemem_names = real_names24
-
-    # 24d. THE SECURITY ASSERTION, and the reason this branch is not just
-    # `expanduser`. Poisoning every env var that spells "home" must not put an
-    # attacker-chosen directory in the list. A SHORTER list is acceptable
-    # (fail-open, same as an uninstalled host); a REDIRECTED one is the home-redirect
-    # exploit reopened on a second platform.
-    #
-    # THE DECOY MUST EXIST. The first version of this case poisoned to a
-    # non-existent path, which made the assertion vacuous: `SHGetKnownFolderPath`
-    # verifies existence under KF_FLAG_DEFAULT, so the redirect it meant to
-    # catch showed up as a failed call, and the check passed against a live
-    # vulnerability. Creating the decoy is what gives this teeth; review
-    # reproduced the redirect this way.
+    # --- 24. a poisoned environment cannot move the resolved tool ---------
     with tempfile.TemporaryDirectory() as decoy_root:
         decoy = Path(decoy_root) / "poisonhome"
-        (decoy / "AppData" / "Local" / "Programs" / "vardemem").mkdir(parents=True)
         (decoy / ".local" / "bin").mkdir(parents=True)
         probe = (
             "import importlib.util,sys\n"
             "s=importlib.util.spec_from_file_location('p',sys.argv[1])\n"
             "m=importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
-            "print('\\n'.join(m._vardemem_search_dirs()))\n"
+            "print(m.resolve_vardemem())\n"
         )
         poisoned_env = dict(os.environ)
         poisoned_env.update({
             "HOME": str(decoy), "USERPROFILE": str(decoy),
-            "LOCALAPPDATA": str(decoy / "AppData" / "Local"),
-            "APPDATA": str(decoy / "AppData" / "Roaming"),
-            "HOMEDRIVE": "", "HOMEPATH": str(decoy),
+            "PATH": str(decoy / ".local" / "bin") + os.pathsep + os.environ.get("PATH", ""),
         })
         got24 = subprocess.run([sys.executable, "-c", probe, str(HOOK)],
                                capture_output=True, text=True,
                                encoding="utf-8", errors="replace", timeout=30,
                                env=poisoned_env)
-        check(got24.returncode == 0,
-              "24d the resolver does not raise under a poisoned environment")
-        # Ordered deliberately: prove stdout is non-empty BEFORE asserting what
-        # is absent from it. An empty capture satisfies any "not in" check, and
-        # that is not hypothetical here -- unpinned text=True decodes with the
-        # locale codec, and on Windows a cp1252 failure kills the reader thread
-        # and hands back returncode 0 with stdout None. That would make
-        # this case vacuous a second time, by a different mechanism than the
-        # non-existent sentinel it already had.
-        check(got24.stdout.strip() != "",
-              "24d the probe actually returned directories, so the absence "
-              "check below cannot pass on an empty capture")
-        check(str(decoy) not in got24.stdout,
-              "24d an EXISTING attacker-controlled home does not redirect "
-              "where the tool is resolved from (on both platforms; the "
-              "decoy exists, so this cannot pass vacuously)")
+        check(got24.returncode == 0 and got24.stdout.strip() == str(BUNDLED),
+              "24 a poisoned HOME and PATH still resolve the bundled copy")
 
     # --- 25. event wiring: the harness rejects hookSpecificOutput from ---------
     # PostCompact, and SessionStart already fires after a compaction.

@@ -37,13 +37,17 @@ The read prints oldest first. Recent days print in full at the bottom; each olde
 
 ## Install
 
-You need Python 3. Nothing to build. Clone the repo and link the one file onto your `PATH`:
+You need Python 3. Nothing to build.
+
+In Claude Code, install the `journal` plugin (see [its README](plugins/journal/README.md)). It carries the tool in its `bin/`, so `vardemem` is on the `PATH` of every Bash command the session runs, and its session-start hook runs that same copy.
+
+Anywhere else, clone the repo and link the one file onto your `PATH`:
 
 ```bash
-ln -s /path/to/varde-mem/vardemem.py ~/.local/bin/vardemem
+ln -s /path/to/varde-mem/plugins/journal/bin/vardemem ~/.local/bin/vardemem
 ```
 
-Now run `vardemem read`, or invoke the file directly with `python3 vardemem.py read`.
+Now run `vardemem read`, or invoke the file directly with `python3 vardemem.py read`. The root `vardemem.py` is a link to the same file.
 
 ## The loop
 
@@ -152,11 +156,31 @@ VardeMem tiles history with aligned power-of-two blocks whose detail thins with 
 
 **Concurrency.** On a POSIX host, two writers serialize under a file lock (where `fcntl` is unavailable, such as Windows, there is none). A real conflict needs two diverged checkouts recording the same day, and date-keying localizes it to one line or one file: a clashing index line is derived, so keep either side or re-summarize; a journal day file is real append-only history, so keep both.
 
+## Rules and facts
+
+The journal records what happened. A durable rule or fact ("always do X", "this tool breaks when Y") goes to the one place that owns it, chosen by its kind before it is written. The config declares those places as homes:
+
+```json
+{
+  "journal": "Journal",
+  "homes": {
+    "agent-rules": {"kinds": ["agent-rule"], "file": "Rules/agent-rules.md"},
+    "repo-x": {"kinds": ["repo-process"], "repo": "example-org/repo-x", "file": "CONTRIBUTING.md"}
+  }
+}
+```
+
+- A home with only `file` is in this tree. `vardemem rule <kind> "<text>"` adds one entry line there, and a restatement of an existing entry adds nothing.
+- A home with `repo` is in another repository. VardeMem never writes it: the command names the repo and file, exits 4, and the rule goes in through a change to that repo.
+- The `repo-process` kind (how one repo is changed, merged or released) may only name a repo home, so such a rule can never land in this tree.
+- `vardemem route <kind>` prints the one home for a kind. A kind with no home, or with more than one and no `--home`, is refused with the choices listed.
+- `vardemem rules` reads back the entries in this tree's homes, within the line budget.
+
 ## Files
 
 | Path | Purpose |
 | --- | --- |
-| `vardemem.py` | The tool. Implementation plus `selftest`. |
+| `plugins/journal/bin/vardemem` | The tool. Implementation plus `selftest`. `vardemem.py` at the root links to it. |
 | `plugins/` | The optional Claude Code plugins, each with its own README and smoke tests. |
 | `CONTRIBUTING.md` | Pre-PR checklist and the boundaries a change keeps. |
 | `SECURITY.md` | How to report a vulnerability. |

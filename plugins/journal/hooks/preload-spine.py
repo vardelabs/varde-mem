@@ -21,16 +21,12 @@ INLINE_SAFE_CAP (9 KB), so the harness ~10 KB injection ceiling holds even
 when both hooks fire their worst case in the same session. Slightly dumber,
 fully decoupled, honest about the hook boundary.
 
-RESOLUTION   The installed `vardemem` binary is resolved from a fixed list of
-             directories, never from $PATH or $HOME. A poisoned shell
-             environment or a repo setting $HOME cannot redirect which binary
-             runs. On POSIX that list is the passwd home's `.local/bin`, then
-             /usr/local/bin, /opt/homebrew/bin, /usr/bin. On Windows it is
-             `AppData\\Local\\Programs\\vardemem` then `.local\\bin` under the
-             profile root read from the PROCESS TOKEN, and the filename
-             `vardemem.py` is accepted alongside `vardemem`. The
-             session's cwd selects WHICH journal vardemem reads (it walks up
-             from cwd for `.vardemem.json`), not which binary runs.
+RESOLUTION   The plugin bundles `vardemem` in its own `bin/`, and the hook
+             runs that copy, located from this file's own path. Nothing
+             is looked up on $PATH or under $HOME, so a poisoned shell
+             environment cannot change which tool runs. The session's cwd
+             selects WHICH journal vardemem reads (it walks up from cwd
+             for `.vardemem.json`), not which tool runs.
 Budget       The spine claims at most SPINE_BUDGET bytes (see STATIC BUDGET).
              Its own `--budget` is used to compress rather than to clip: a
              read over the allowance is re-run with a derived line budget so
@@ -64,18 +60,12 @@ import sys
 import time
 from pathlib import Path
 
-# Deliberately unguarded, matching the sibling hooks. An earlier revision fell
-# back to argv[0]'s directory, and to the CWD when argv[0] was `-c`, so that an
-# exec'd-from-source test could still import. That put the session's own
-# working directory first on sys.path immediately before importing the module
-# that decides which home to trust: a walked repo carrying its own
-# `agent_home.py` would have supplied `trusted_home`, which is the "the tree
-# controls what gates it" hole this whole resolver exists to close. A caller
-# that cannot say where this file lives does not get to guess.
+# This file's own folder, never argv[0] or the cwd: a walked repo carrying its
+# own `agent_home.py` would otherwise choose which home is trusted.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from agent_home import trusted_home  # noqa: E402
-
+# remind-journal-owed reads the trusted home through this module.
+from agent_home import trusted_home  # noqa: E402,F401
 
 # --- Budgets -------------------------------------------------------------
 # THIS hook's static share of the assembled additionalContext. The old
@@ -176,17 +166,6 @@ def _open_beneath(vault: Path, rel_parts, flags: int, mode: int = 0o600):
                 pass
 
 
-# Well-known system directories only -- NEVER the session's own $PATH. A
-# direnv-loaded `.envrc` in an untrusted repo, a devcontainer's PATH
-# manipulation, or a poisoned shell profile can all prepend a fake `git` onto
-# a session's PATH before this hook ever runs, and that fake binary can print
-# whatever `worktree list --porcelain` output it likes. Searching only these
-# fixed locations means an attacker who controls a session's PATH still can't
-# make THIS specific command resolve to anything but the real git (this class of
-# attack holds against the OLD common-dir code too, so it predates this diff, but
-# it is cheap to close here and worth closing).
-# Installed VardeMem is resolved from fixed, trusted directories, never from
-# the session's PATH or HOME.
 VARDEMEM_BIN = "vardemem"
 VARDEMEM_EXIT_NO_JOURNAL = 3
 
@@ -233,115 +212,10 @@ def resolve_vault() -> Path | None:
         return None
 
 
-# The token-derived home lives in `agent_home`. It was written here
-# first, then `enforce-journal-entry` needed the identical primitive:
-# copying forty lines of pinned ctypes signatures into a second hook is how
-# two copies of a security boundary drift apart. See that module for why no
-# environment variable is read and why SHGetKnownFolderPath is not enough.
-
-
-def _windows_search_dirs(profile):
-    """The Windows candidates under one token-derived profile root.
-
-    BOTH entries hang off that single root. `AppData\\Local` is spelled out
-    rather than asked of the shell, because the API that answers that question
-    expands `%USERPROFILE%` and is therefore redirectable (see
-    `agent_home`). This is the standard per-user layout; a host that
-    relocated it installs to the second entry instead.
-
-    Split out from the platform branch so it runs on ANY host: the merge gate
-    runs on Linux, where an `os.name == "nt"` body executes zero times, and
-    for a `.ci-relaxed` plugin the test suite is the only gate there is. A
-    reordering or a typo in here would otherwise merge green forever."""
-    return (os.path.join(profile, "AppData", "Local", "Programs", "vardemem"),
-            # Mirrors the POSIX `~/.local/bin` entry: Git Bash users on this
-            # platform create and use it by habit.
-            os.path.join(profile, ".local", "bin"))
-
-
-def _vardemem_names():
-    """Filenames that count as an installed `vardemem`, in preference order.
-
-    POSIX takes exactly one, matching the README's documented symlink install.
-    Windows also accepts the `.py` spelling because creating a symlink there
-    needs a privilege the host may not grant (vardemem's own `selftest` fails
-    on precisely that call), so the realistic Windows install is a COPY of
-    `vardemem.py`, which keeps its extension. Rejecting that name would be a
-    silent no-op, the failure class this hook exists to end. The file is
-    handed to `sys.executable` as a script either way, so neither name needs
-    to be a Windows executable."""
-    if os.name == "nt":
-        return (VARDEMEM_BIN, VARDEMEM_BIN + ".py")
-    return (VARDEMEM_BIN,)
-
-
-def _vardemem_search_dirs():
-    """Where an installed `vardemem` may live, in preference order.
-
-    A FIXED list, never the session's own $PATH, for the reason this hook used
-    to give for resolving `git`: a direnv-loaded `.envrc` in an untrusted repo,
-    a devcontainer, or a poisoned shell profile can prepend a fake binary
-    before this hook runs. Installing the tool removed the WORKTREE trust
-    check, because nothing walks into arbitrary repos any more; it did not
-    remove the need to trust what gets executed.
-
-    The home directory comes from the OS, never `$HOME` / `Path.home()`:
-    the passwd entry on POSIX and the process token on Windows. Every
-    vector named above sets environment variables, and
-    both read `$HOME` first, so a repo that sets it moves where this list's
-    one `~`-anchored entry points, silently. The attack was never "change
-    what your home directory contains", it was "change where `~` points".
-
-    Tests override this FUNCTION, never an environment variable, because an
-    env-var seam here IS the exploit.
-
-    WINDOWS is its own branch rather than the no-home fallback below.
-    That fallback returns three POSIX paths, which on Windows resolve to
-    nothing, so the hook was a permanent silent no-op there: not a host
-    without a spine, but a host that could never have one. Both Windows
-    entries hang off `_windows_profile_dir()`, the `getpwuid` of this
-    platform; see its docstring for why the shell's own known-folder API is
-    NOT enough and what an environment variable can still do."""
-    if os.name == "nt":
-        profile = trusted_home(log)
-        if not profile:
-            # Already logged by the resolver. An empty list is honest: we do
-            # not know where to look, which is NOT the same as "nothing is
-            # installed", and the log says which one happened.
-            return ()
-        return _windows_search_dirs(profile)
-    home = trusted_home(log)
-    if home is None:
-        return ("/usr/local/bin", "/opt/homebrew/bin", "/usr/bin")
-    return (os.path.join(home, ".local", "bin"), "/usr/local/bin",
-            "/opt/homebrew/bin", "/usr/bin")
-
-
 def resolve_vardemem():
-    """Absolute path to an installed `vardemem`, or None.
-
-    None means the tool is not installed on this host, which is a supported
-    steady state rather than a failure: a tenant without it simply gets no
-    spine. Deliberately no bare-name PATH fallback, for the reason above.
-
-    Directory order outranks filename order: a host that has both spellings in
-    two different directories takes the one in the earlier directory, so the
-    preference expressed by the fixed list is never overridden by a filename."""
-    names = _vardemem_names()
-    for d in _vardemem_search_dirs():
-        for name in names:
-            candidate = os.path.join(d, name)
-            if not os.path.isfile(candidate):
-                continue
-            # X_OK is meaningless on Windows: CPython's os.access reports every
-            # existing file as executable there, so keeping the check would
-            # read as a guard while filtering nothing. The real containment on
-            # both platforms is that the DIRECTORY is fixed and token-derived,
-            # never $PATH; on POSIX the execute bit is a genuine second
-            # condition, so it still applies there.
-            if os.name == "nt" or os.access(candidate, os.X_OK):
-                return candidate
-    return None
+    """The `vardemem` bundled with this plugin, or None when it is missing."""
+    bundled = Path(__file__).resolve().parent.parent / "bin" / VARDEMEM_BIN
+    return str(bundled) if bundled.is_file() else None
 
 
 def _run_spine_read(script, cwd, extra_args, timeout: float):
@@ -668,9 +542,9 @@ def build_spine_block(cwd, allowance: int, outer_deadline: float) -> str:
     try:
         script = resolve_vardemem()
         if script is None:
-            # ABSENT TOOL. Not a degradation: a tenant without VardeMem
-            # installed has no spine, so there is nothing to say about it.
-            log(f"spine: no {VARDEMEM_BIN} installed; nothing to inject (no-op)")
+            # A plugin copy missing its own tool is a broken install, and a
+            # session start must not fail over it.
+            log(f"spine: the bundled {VARDEMEM_BIN} is missing; nothing to inject")
             return ""
         header = (
             "=== EPISODIC SPINE (bounded pass over the whole Journal; loaded "
