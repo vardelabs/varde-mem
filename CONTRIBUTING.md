@@ -5,7 +5,7 @@ Every reachable commit must be safe to publish.
 
 ## Before opening a pull request
 
-1. From the repository root, run `python3 vardemem.py selftest`. It needs no journal and builds its own throwaway trees, so it touches nothing real.
+1. From the repository root, run `python3 plugins/journal/bin/vardemem selftest`. It needs no journal and builds its own throwaway trees, so it touches nothing real.
 2. Confirm the diff contains no secrets, private hostnames, tenant paths, real journal content, customer material, or operational logs.
 3. Keep deployment-specific values in the managed tree's `.vardemem.json`, which lives outside this repository, never in a committed default.
 4. Add a `selftest` property check for any index-arithmetic or configuration defect you fix.

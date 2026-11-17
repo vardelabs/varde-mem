@@ -43,7 +43,7 @@ body:
     id: selftest
     attributes:
       label: selftest result
-      description: The last line of `python3 vardemem.py selftest`.
+      description: The last line of `python3 plugins/journal/bin/vardemem selftest`.
   - type: input
     id: environment
     attributes:

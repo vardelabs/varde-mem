@@ -73,12 +73,12 @@ Opt in with a config under the trusted (passwd/token) home at
 
 ## `preload-spine.py` (SessionStart)
 
-Runs the installed `vardemem` binary to inject the episodic spine (a decayed
+Runs the `vardemem` bundled in this plugin's `bin/` to inject the episodic spine (a decayed
 index over the Journal) into agent context at session start. SessionStart also
 fires after a compaction, with source `compact`, so the spine returns then too.
 It moved here from the monolith because the spine is a VardeMem artifact,
-built by `vardemem` and read by every agent. Resolution, fencing, and budgets
-are unchanged from the reviewed hook. Disable via `$JOURNAL_DISABLED`
+built by `vardemem` and read by every agent. The hook finds the tool from its own path, never from `$PATH` or
+`$HOME`. Disable via `$JOURNAL_DISABLED`
 (legacy `$HARNESS_MANAGEMENT_DISABLED` honored). Tests:
 `tests/smoke-preload-spine.py`.
 
