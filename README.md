@@ -125,6 +125,8 @@ A managed tree carries a `.vardemem.json` at its root. That file is both the con
 | `journal` | yes | Directory of `journal-<YYYY-MM-DD>.md` day files, resolved against the root. |
 | `archive` | no | A second day-file directory (`<YYYY-MM-DD>.md`) from before a cutover, resolved against the journal directory. |
 | `spine` | no | The index file, resolved against the journal directory. Defaults to `SPINE.md`, so the index sits beside the day files. |
+| `pruned_before` | no | A `YYYY-MM-DD` date. The journal files before it were removed on purpose, so `missing` does not list their spine lines as having no journal behind them. |
+| `homes` | no | Where rules and facts go, by kind. See [Rules and facts](#rules-and-facts). |
 
 Each path stays under its own base: no absolute paths, no `..`. To keep a journal elsewhere, symlink the directory in.
 
