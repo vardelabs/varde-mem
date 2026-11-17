@@ -2355,14 +2355,26 @@ def _append_entry(root, target, home, text):
                for line in lines):
             return "Already recorded in %s." % target
         body = (old.rstrip("\n") + "\n") if old.strip() else "# %s\n\n" % home.name
-        tmp = target.with_name(".%s.tmp%d" % (target.name, os.getpid()))
-        try:
-            tmp.write_text(body + ENTRY + text + "\n", encoding="utf-8")
-            os.replace(tmp, target)
-        except (OSError, ValueError) as e:
-            tmp.unlink(missing_ok=True)
-            die("Could not write %s: %s" % (target, e))
+        _replace_file(target, body + ENTRY + text + "\n")
     return "Recorded in %s." % target
+
+
+def _replace_file(target, text):
+    """Write `text` to a fresh file beside `target`, then rename it over.
+    mkstemp creates the file exclusively, so a link planted at the temporary
+    name cannot redirect the write."""
+    import tempfile
+    try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".%s." % target.name)
+    except OSError as e:
+        die("Could not write beside %s: %s" % (target, e))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(text)
+        os.replace(tmp, target)
+    except (OSError, ValueError) as e:
+        Path(tmp).unlink(missing_ok=True)
+        die("Could not write %s: %s" % (target, e))
 
 
 def _rule_args(args):
@@ -2407,26 +2419,37 @@ def cmd_rules(args):
     rest, budget = parse_budget(args, "rules")
     if rest:
         die("usage: %s rules [--budget N]" % ME)
-    root, homes = _homes()
-    shown = 0
+    listed = _recorded_rules(*_homes())
+    left = budget
+    for i, (home, target, entries) in enumerate(listed):
+        if left < 2:
+            print("!! %d more home(s) past the budget: %s"
+                  % (len(listed) - i, ", ".join(str(t) for _, t, _ in listed[i:])))
+            return
+        print("== %s (%s)" % (home.name, home.file))
+        shown = entries[:left - 1]
+        for line in shown:
+            print(line)
+        left -= 1 + len(shown)
+        if len(entries) > len(shown):
+            print("!! %d more in %s" % (len(entries) - len(shown), target))
+
+
+def _recorded_rules(root, homes):
+    """(home, file, entry lines) for each home in this tree that has entries."""
+    found = []
     for home in homes.values():
         if home.repo:
             continue
         target = _home_file(root, home, writing=False)
         try:
-            entries = [line for line in target.read_text(encoding="utf-8").splitlines()
-                       if line.startswith(ENTRY)] if target.exists() else []
+            text = target.read_text(encoding="utf-8") if target.exists() else ""
         except (OSError, ValueError) as e:
             die("Could not read %s: %s" % (target, e))
-        if not entries:
-            continue
-        print("== %s (%s)" % (home.name, home.file))
-        room = max(budget - shown, 0)
-        for line in entries[:room]:
-            print(line)
-        if len(entries) > room:
-            print("!! %d more in %s" % (len(entries) - room, target))
-        shown += min(len(entries), room)
+        entries = [line for line in text.splitlines() if line.startswith(ENTRY)]
+        if entries:
+            found.append((home, target, entries))
+    return found
 
 
 def cmd_selftest(args):
@@ -4196,6 +4219,13 @@ def _selftest_rules(check):
         rc, out = run("rules")
         check(rc == 0 and "- Read the README first." in out,
               "`rules` reads past a home whose folder does not exist yet")
+        configure(homes)
+        (root / "Rules" / "more.md").write_text(
+            "".join("%sextra %d\n" % (ENTRY, i) for i in range(5)), encoding="utf-8")
+        configure(dict(homes, more={"kinds": ["fact"], "file": "Rules/more.md"}))
+        rc, out = run("rules", "--budget", "3")
+        check(rc == 0 and len(out.splitlines()) <= 5 and "!! " in out,
+              "`rules` keeps headers inside the budget and names what it left out")
         configure(homes)
         rc, out = run("rule", "no-such-kind", "x")
         check(rc == 1 and "agent-rule" in out, "an undeclared kind lists the declared ones")
