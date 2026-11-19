@@ -25,8 +25,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 HOOK_PATH = HERE.parent.parent / "hooks" / "enforce-memory-routing.py"
 RULE_CHARS = 280
-# A list item or a heading is its own fact, so joining the lines would merge facts.
 TYPE_LINE = re.compile(r"^\s*type:", re.MULTILINE)
+# A list item or a heading is its own fact, so joining the lines would merge facts.
 STRUCTURED_LINE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|#)", re.MULTILINE)
 EXIT_ROUTED = 4
 RULE_TIMEOUT_SECONDS = 30
