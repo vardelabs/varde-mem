@@ -24,6 +24,7 @@ MEMORIES = {
     "rule.md": "---\nname: r\ntype: feedback\n---\nAlways run the tests before a pull request.\n",
     "wrapped.md": "---\nname: w\ntype: feedback\n---\nPrefer small commits\nwith one change each.\n",
     "long.md": "---\nname: l\ntype: feedback\n---\nFirst paragraph.\n\nSecond paragraph.\n",
+    "list.md": "---\nname: s\ntype: feedback\n---\n- Keep A\n- Keep B\n",
     "repo.md": "---\nname: p\ntype: plugin\n---\nThe example plugin skips empty files.\n",
     "loose.md": "---\nname: u\ntype: reference\n---\nA link to read later.\n",
     "MEMORY.md": "- index\n",
@@ -76,10 +77,11 @@ def main() -> int:
         cases.append(("a wrapped paragraph is recorded as one line",
                       "- Prefer small commits with one change each." in recorded))
         cases.append(("two paragraphs are reported", "unplaced  long.md: body is not one paragraph" in out))
+        cases.append(("a list body is reported", "unplaced  list.md: body is not one paragraph" in out))
         cases.append(("a repo home is reported", "unplaced  repo.md: its home is in a repo" in out))
         cases.append(("an unmapped type is reported", "unplaced  loose.md: type `reference`" in out))
         cases.append(("the index is not migrated", "MEMORY.md" not in out))
-        cases.append(("the count names the reported files", "3 file(s) left for the operator" in out))
+        cases.append(("the count names the reported files", "4 file(s) left for the operator" in out))
         cases.append(("no memory file is deleted or changed", snapshot(mem) == before))
 
         second = run(home, vault, mem, "--apply")

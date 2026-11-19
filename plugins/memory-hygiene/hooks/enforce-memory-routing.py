@@ -173,8 +173,8 @@ def block_reason(cfg: dict, cmd: list, name: str, ftype: str) -> str | None:
         route = f"{head} `vardemem route {kind}` sends a `{ftype}` memory to home `{home['home']}`"
         if home.get("written_here"):
             return f'{route}. Record it with `vardemem rule {kind} "<one line>"`.'
-        return (f"{route}, which lives in repo `{home.get('repo')}`. Add it to "
-                f"`{home.get('file')}` through a change to that repo.")
+        return (f"{route}, which lives in repo `{safe_display(str(home.get('repo')))}`. Add it "
+                f"to `{safe_display(str(home.get('file')))}` through a change to that repo.")
     answer = run_vardemem(cmd, "rules", "--budget", "2")
     if not answer or answer[0] != 0:
         return None
@@ -187,7 +187,8 @@ def pre_tool_use(payload: dict, cfg: dict, file_path: str) -> int:
     """Deny a Write that creates a new memory file, when routing is on."""
     if not cfg or cfg.get("block") is not True or payload.get("tool_name") != "Write":
         return 0
-    if os.path.lexists(file_path):
+    # A link could carry the Write to a file outside the memory dir.
+    if os.path.isfile(file_path) and not os.path.islink(file_path):
         return 0
     content = (payload.get("tool_input") or {}).get("content")
     ftype = frontmatter_type(content) if isinstance(content, str) else ""

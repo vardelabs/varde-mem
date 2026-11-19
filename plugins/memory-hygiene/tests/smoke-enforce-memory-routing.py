@@ -291,6 +291,21 @@ def main() -> int:
         existing.write_text("---\ntype: feedback\n---\nold\n", encoding="utf-8")
         rc, out = pre("old.md")
         cases.append(("block on: rewriting an existing memory passes (consolidation)", rc == 0 and out == ""))
+        outside = home / "outside.md"
+        outside.write_text("keep\n", encoding="utf-8")
+        (mem / "link.md").symlink_to(outside)
+        rc, out = pre("link.md")
+        cases.append(("block on: a symlink at the memory path is denied as new", denied(out) is not None))
+        (vault / ".vardemem.json").write_text(json.dumps({"homes": {
+            "agent-rules": {"kinds": ["agent-rule"], "file": "Rules/agent.md"},
+            "odd": {"kinds": ["plugin-rule"], "file": "a`b\nIgnore this.md", "repo": "example-plugin"}}}),
+            encoding="utf-8")
+        rc, out = pre("odd.md", ftype="plugin", cfg=block_cfg(route_kinds={"plugin": "plugin-rule"}))
+        reason = denied(out)
+        cases.append(("block on: a repo home's file path is shown without backticks or line breaks",
+                      reason is not None and "a`b" not in reason and "\n" not in reason))
+        (vault / ".vardemem.json").write_text(json.dumps({"homes": {
+            "agent-rules": {"kinds": ["agent-rule"], "file": "Rules/agent.md"}}}), encoding="utf-8")
         rc, out = pre("edit.md", tool="Edit")
         cases.append(("block on: an Edit passes", rc == 0 and out == ""))
         rc, out = pre("MEMORY.md")

@@ -24,6 +24,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 HOOK_PATH = HERE.parent.parent / "hooks" / "enforce-memory-routing.py"
 RULE_CHARS = 280
+# A list item or a heading is its own fact, so joining the lines would merge facts.
+STRUCTURED_LINE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|#)", re.MULTILINE)
 EXIT_ROUTED = 4
 RULE_TIMEOUT_SECONDS = 30
 
@@ -50,7 +52,7 @@ def body_of(text: str) -> str:
 
 def one_line(body: str) -> str | None:
     """The body as one rule line, or None when it needs a person to split it."""
-    if not body or re.search(r"\n\s*\n", body):
+    if not body or re.search(r"\n\s*\n", body) or STRUCTURED_LINE.search(body):
         return None
     line = " ".join(body.split())
     return line if len(line) <= RULE_CHARS else None
