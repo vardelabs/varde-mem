@@ -24,6 +24,7 @@ import tempfile
 from pathlib import Path
 
 HOOK = Path(__file__).resolve().parent.parent / "hooks" / "enforce-memory-routing.py"
+VARDEMEM = Path(__file__).resolve().parents[3] / "plugins" / "journal" / "bin" / "vardemem"
 
 CFG_DIR = ".config/memory-hygiene"
 
@@ -240,6 +241,61 @@ def main() -> int:
         rc, out = run_rc(home, json.dumps(
             {"tool_name": "Write", "tool_input": {"file_path": mp}}), cfg="null")
         cases.append(("null config stays silent", rc == 0 and out == ""))
+
+    # Blocking, when routing is on: a PreToolUse Write that creates a new memory
+    # file is denied once the real vardemem confirms a declared home.
+    with tempfile.TemporaryDirectory() as td:
+        home = Path(td)
+        vault = home / "agent-vault"
+        (vault / "Rules").mkdir(parents=True)
+        (vault / ".vardemem.json").write_text(json.dumps({"homes": {
+            "agent-rules": {"kinds": ["agent-rule"], "file": "Rules/agent.md"}}}), encoding="utf-8")
+        mem = home / ".claude/projects/-x/memory"
+        mem.mkdir(parents=True)
+
+        def block_cfg(**extra):
+            return json.dumps({"enabled": True, "trip_types": {"project": "x"},
+                               "vardemem": str(VARDEMEM), "route_kinds": {"feedback": "agent-rule"},
+                               "block": True, **extra})
+
+        def pre(name, ftype="feedback", cfg=None, tool="Write"):
+            payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": {
+                "file_path": str(mem / name), "content": f"---\nname: t\ntype: {ftype}\n---\nAlways X.\n"}}
+            return run_rc(home, json.dumps(payload), cfg=cfg if cfg is not None else block_cfg())
+
+        def denied(out):
+            try:
+                hso = json.loads(out)["hookSpecificOutput"]
+            except (ValueError, KeyError, TypeError):
+                return None
+            return hso["permissionDecisionReason"] if hso.get("permissionDecision") == "deny" else None
+
+        rc, out = pre("new.md")
+        reason = denied(out)
+        cases.append(("block on: a new feedback memory is denied and names the route",
+                      rc == 0 and reason is not None and "vardemem route agent-rule" in reason
+                      and "agent-rules" in reason))
+        rc, out = pre("ref.md", ftype="reference")
+        reason = denied(out)
+        cases.append(("block on: an unmapped type is denied and lists the mapped kinds",
+                      reason is not None and "vardemem route <kind>" in reason and "agent-rule" in reason))
+        existing = mem / "old.md"
+        existing.write_text("---\ntype: feedback\n---\nold\n", encoding="utf-8")
+        rc, out = pre("old.md")
+        cases.append(("block on: rewriting an existing memory passes (consolidation)", rc == 0 and out == ""))
+        rc, out = pre("edit.md", tool="Edit")
+        cases.append(("block on: an Edit passes", rc == 0 and out == ""))
+        rc, out = pre("MEMORY.md")
+        cases.append(("block on: the MEMORY.md index passes", rc == 0 and out == ""))
+        rc, out = pre("off.md", cfg=block_cfg(block=False))
+        cases.append(("block off: the new memory passes the PreToolUse half", rc == 0 and out == ""))
+        rc, out = pre("nobin.md", cfg=block_cfg(vardemem=str(home / "missing")))
+        cases.append(("no vardemem: falls back to advice, no deny", rc == 0 and out == ""))
+        (vault / ".vardemem.json").write_text("{}", encoding="utf-8")
+        rc, out = pre("nohomes.md")
+        cases.append(("no declared homes: no deny", rc == 0 and out == ""))
+        rc, out = pre("nohomes2.md", ftype="reference")
+        cases.append(("no declared homes, unmapped type: no deny", rc == 0 and out == ""))
 
     # Hot-path no-disk-write: an ordinary non-memory write must do zero disk work,
     # so the log file must not even be created (fresh $HOME).

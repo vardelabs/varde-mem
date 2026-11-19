@@ -28,7 +28,10 @@ ends: a write-time reflex and a periodic cleanup.
   the write-time reflex. When a memory is written whose frontmatter `type:` is
   vault-bound (per the config's `trip_types`), it injects a non-blocking advisory
   so the agent re-routes it in the same turn. Fail-open, and a no-op unless a
-  config opts in.
+  config opts in. The same script runs on PreToolUse `Write` as the block (see
+  "Blocking" below).
+- **`skills/consolidate-memory/migrate.py`**: a one-shot migration from the
+  auto-memory dir into the homes a tree declares (see "Migrating" below).
 
 ## Configuration
 
@@ -58,10 +61,48 @@ The config is the only gate. With no usable config the hook no-ops; there is no
 separate env off-switch. To stop routing, set `enabled: false` in the config or
 delete it.
 
+### Blocking
+
+Set `"block": true` to refuse a new auto-memory file once the tree declares
+`homes` for `vardemem rule`. The hook then denies a Write that would create a
+memory file, and the reason names `vardemem route <kind>`. The kind comes from
+`route_kinds`, which maps a frontmatter `type:` to a rule kind. With an unmapped
+type, the reason lists the kinds `route_kinds` names. An Edit, or a Write over a
+memory file that exists, still passes, so consolidation can merge and trim in
+place.
+
+The hook runs `vardemem` from the session's directory: `"vardemem"` in the config
+when set, else the first one on `PATH`. When it cannot confirm a declared home
+(no `vardemem`, no `homes`, an error, or a 3 second timeout), the write passes and
+the advisory runs as before.
+
+```json
+{
+  "enabled": true,
+  "block": true,
+  "trip_types": {"project": "a project or company fact. Fold it into your vault."},
+  "route_kinds": {"feedback": "agent-rule", "project": "fact"}
+}
+```
+
+### Migrating
+
+```bash
+python3 skills/consolidate-memory/migrate.py [--apply] [<memory-dir>]
+```
+
+Without `--apply` it prints its plan. With it, each memory whose `type:` maps
+through `route_kinds`, and whose body is one paragraph that fits one rule line
+(280 characters), is recorded with `vardemem rule`. Every other file is listed
+as `unplaced` with the reason, for the operator to place by hand: a longer body,
+an unmapped type, or a home in a repo. The migration deletes and edits no memory
+file, and a rerun records nothing new.
+
 ## Tests
 
 ```bash
 python3 tests/smoke-enforce-memory-routing.py
+python3 tests/smoke-migrate.py
 python3 tests/smoke-scan.py
 python3 tests/smoke-snapshot.py
 ```
@@ -70,7 +111,14 @@ The hook suite runs `enforce-memory-routing.py` against a throwaway `$HOME`: the
 opt-in gate, trip-type matching (bare, quoted, hyphenated, and inline-commented
 YAML values), the silent cases, the `memory_path_regex` override, the null and
 undecodable config handling, filename sanitization in the advisory, Windows-path
-parity, and the hot-path no-disk-write guarantee.
+parity, and the hot-path no-disk-write guarantee. Its blocking cases run the
+real `vardemem` against a synthetic tree: a new memory is denied with the route,
+an existing file, an Edit and the index pass, and a missing `vardemem` or an
+empty `homes` falls back to advice.
+
+The migration suite builds a synthetic memory dir and tree. It checks the dry
+run, what `--apply` records and reports, that no memory file changes, and that a
+rerun is a no-op.
 
 The scanner suite runs `scan.py`: the bloat/healthy/missing-dir verdicts, that
 misroute detection is opt-in (no routing config, or `enabled: false`, means only

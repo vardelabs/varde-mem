@@ -18,6 +18,17 @@ OPT-IN PER TENANT. With no config (or `enabled` not true) the hook no-ops:
       "memory_path_regex": "optional; default matches any auto-memory dir"
     }
 
+BLOCKING, when routing is on. A config that also sets `"block": true` turns the
+PreToolUse half on: a Write that would CREATE a new memory file is denied when
+`vardemem` answers from the session's tree with at least one declared home. The
+reason names `vardemem route <kind>`, with the kind from the config's
+`route_kinds` (frontmatter type -> rule kind) and the home it returns, or lists
+the kinds `route_kinds` names. Edits and rewrites of an existing memory file
+still pass, because the consolidate-memory skill merges and trims in place.
+Anything that keeps the hook from confirming a declared home (no `vardemem`, no
+homes, an error, a timeout) falls back to the advisory below. `vardemem` is
+`cfg["vardemem"]` when set, else the first one on PATH.
+
 The config path is `~/.config/memory-hygiene/memory-routing.json`. See
 hooks/memory-routing.config.example.json. The config is the only
 gate: with no usable config the hook no-ops, and there is no separate off-switch.
@@ -27,6 +38,8 @@ Always exits 0.
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -35,6 +48,7 @@ CONFIG_PATH = Path.home() / ".config/memory-hygiene/memory-routing.json"
 LOG_FILE = Path.home() / ".local/log/memory-routing-hook.log"
 DEFAULT_MEM_RE = r"/\.claude/projects/[^/]+/memory/[^/]+\.md$"
 SKIP_NAMES = {"MEMORY.md", ".gitignore"}
+VARDEMEM_TIMEOUT_SECONDS = 3
 
 
 def normalize_seps(path: str) -> str:
@@ -103,25 +117,97 @@ def frontmatter_type(text: str) -> str:
     return m.group(1).strip().lower() if m else ""
 
 
-def main() -> int:
+def safe_display(name: str) -> str:
+    r"""The filename is DATA, not instructions. Strip every line boundary
+    (str.splitlines covers \n, \r, vertical tab, form feed, U+2028/U+2029, NEL,
+    etc.) and backticks before embedding it in model-facing text, so a crafted
+    name can neither start a new instruction line nor close the code span."""
+    return "".join(name.splitlines()).replace("`", "")[:200]
+
+
+def vardemem_cmd(cfg: dict) -> list | None:
+    configured = cfg.get("vardemem")
+    if isinstance(configured, str) and configured:
+        return [configured] if os.path.isfile(configured) else None
+    found = shutil.which("vardemem")
+    return [found] if found else None
+
+
+def run_vardemem(cmd: list, *args: str) -> tuple | None:
+    """(returncode, stdout) from vardemem in the session's directory, or None."""
     try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError):
-        return 0
-    if not isinstance(payload, dict):
-        return 0
-    tool_input = payload.get("tool_input") or {}
-    if not isinstance(tool_input, dict):
-        return 0
-    file_path = tool_input.get("file_path")
-    if not isinstance(file_path, str) or not file_path:
-        return 0  # missing/non-string path (e.g. NotebookEdit's notebook_path)
+        proc = subprocess.run(
+            [*cmd, *args], capture_output=True, text=True,
+            timeout=VARDEMEM_TIMEOUT_SECONDS, check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.returncode, proc.stdout
 
-    # Pure config read before the path guard, so a tenant's memory_path_regex can
-    # act as a TRUE override of the default matcher. All disk writes stay deferred
-    # to a confirmed trip below.
-    cfg = load_config()
 
+def route_kinds(cfg: dict) -> dict:
+    table = cfg.get("route_kinds")
+    if not isinstance(table, dict):
+        return {}
+    return {str(k).strip().lower(): v for k, v in table.items()
+            if isinstance(v, str) and re.fullmatch(r"[a-z0-9-]+", v)}
+
+
+def block_reason(cfg: dict, cmd: list, name: str, ftype: str) -> str | None:
+    """The deny reason, or None when vardemem does not confirm a declared home."""
+    kinds = route_kinds(cfg)
+    kind = kinds.get(ftype)
+    head = (f"Routing is on, so a new auto-memory file (`{safe_display(name)}`) is "
+            "refused: auto-memory stays on this device and never reaches the "
+            "homes the tree declares.")
+    if kind:
+        answer = run_vardemem(cmd, "route", kind)
+        if not answer or answer[0] != 0:
+            return None
+        try:
+            home = json.loads(answer[1])
+        except ValueError:
+            return None
+        if not isinstance(home, dict) or not home.get("home"):
+            return None
+        where = (f"home `{home['home']}`" if home.get("written_here")
+                 else f"home `{home['home']}`, in repo `{home.get('repo')}`")
+        return (f"{head} `vardemem route {kind}` sends a `{ftype}` memory to {where}. "
+                f'Record it with `vardemem rule {kind} "<one line>"`.')
+    answer = run_vardemem(cmd, "rules", "--budget", "2")
+    if not answer or answer[0] != 0:
+        return None
+    listed = ", ".join(sorted(set(kinds.values()))) or "none in route_kinds"
+    return (f"{head} Pick the kind of fact, run `vardemem route <kind>`, then "
+            f'`vardemem rule <kind> "<one line>"`. Kinds this tenant maps: {listed}.')
+
+
+def pre_tool_use(payload: dict, cfg: dict, file_path: str) -> int:
+    """Deny a Write that creates a new memory file, when routing is on."""
+    if not cfg or cfg.get("block") is not True or payload.get("tool_name") != "Write":
+        return 0
+    if os.path.lexists(file_path):
+        return 0
+    content = (payload.get("tool_input") or {}).get("content")
+    ftype = frontmatter_type(content) if isinstance(content, str) else ""
+    cmd = vardemem_cmd(cfg)
+    if not cmd:
+        return 0
+    reason = block_reason(cfg, cmd, Path(file_path).name, ftype)
+    if not reason:
+        return 0
+    log(f"blocked new memory: {Path(file_path).name} (type={ftype or 'none'})")
+    sys.stdout.write(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": "deny",
+        "permissionDecisionReason": reason,
+    }}))
+    sys.stdout.flush()
+    return 0
+
+
+def memory_path(cfg: dict, file_path: str) -> bool:
+    """True for an auto-memory file this hook judges."""
     # A valid memory_path_regex overrides the default (can broaden, not just
     # narrow); a malformed one falls back to the default rather than dropping the guard.
     mem_re = DEFAULT_MEM_RE
@@ -142,11 +228,33 @@ def main() -> int:
             re.search(mem_re, normalize_seps(file_path))
         )
     except (re.error, TypeError):
+        return False
+    return matched and Path(file_path).name not in SKIP_NAMES
+
+
+def main() -> int:
+    try:
+        payload = json.load(sys.stdin)
+    except (json.JSONDecodeError, ValueError):
         return 0
-    if not matched:
+    if not isinstance(payload, dict):
         return 0
-    if Path(file_path).name in SKIP_NAMES:
+    tool_input = payload.get("tool_input") or {}
+    if not isinstance(tool_input, dict):
         return 0
+    file_path = tool_input.get("file_path")
+    if not isinstance(file_path, str) or not file_path:
+        return 0  # missing/non-string path (e.g. NotebookEdit's notebook_path)
+
+    # Pure config read before the path guard, so a tenant's memory_path_regex can
+    # act as a TRUE override of the default matcher. All disk writes stay deferred
+    # to a confirmed trip below.
+    cfg = load_config()
+    if not memory_path(cfg, file_path):
+        return 0
+    if payload.get("hook_event_name") == "PreToolUse":
+        return pre_tool_use(payload, cfg, file_path)
+
     if not cfg:
         return 0  # opt-in: no usable config
 
@@ -168,13 +276,8 @@ def main() -> int:
     vault_env = os.environ.get("AGENT_VAULT", "").strip()
     vault_name = Path(vault_env).name if vault_env else "your vault"
     name = Path(file_path).name
-    # The filename is DATA, not instructions. Strip every line boundary
-    # (str.splitlines covers \n, \r, vertical tab, form feed, U+2028/U+2029, NEL,
-    # etc.) and backticks before embedding it in the model-facing advisory, so a
-    # crafted name can neither start a new instruction line nor close the code span
-    # and inject text into the next turn's context. The log keeps the raw name (a
-    # local file, never model context).
-    safe_name = "".join(name.splitlines()).replace("`", "")[:200]
+    # The log keeps the raw name (a local file, never model context).
+    safe_name = safe_display(name)
     log(f"flagged mis-route: {name} (type={ftype})")
     advisory = (
         f"Routing check: the memory you just wrote (`{safe_name}`) has frontmatter "

@@ -226,6 +226,10 @@ established name) with standard frontmatter (`name` / `description` /
 preserving substance. Then delete the source files. Merging drops no facts; the
 trim in step 4b is where facts are cut.
 
+With `"block": true` in the config, the routing hook refuses a Write that creates
+a memory file. Write the merged file over the cluster's first source file
+instead, then delete the others.
+
 ### 4b. Trim every surviving file to the budget
 
 Read every file that survives steps 3 and 4, merged or not, and cut it down.
