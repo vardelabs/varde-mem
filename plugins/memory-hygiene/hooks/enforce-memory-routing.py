@@ -170,10 +170,11 @@ def block_reason(cfg: dict, cmd: list, name: str, ftype: str) -> str | None:
             return None
         if not isinstance(home, dict) or not home.get("home"):
             return None
-        where = (f"home `{home['home']}`" if home.get("written_here")
-                 else f"home `{home['home']}`, in repo `{home.get('repo')}`")
-        return (f"{head} `vardemem route {kind}` sends a `{ftype}` memory to {where}. "
-                f'Record it with `vardemem rule {kind} "<one line>"`.')
+        route = f"{head} `vardemem route {kind}` sends a `{ftype}` memory to home `{home['home']}`"
+        if home.get("written_here"):
+            return f'{route}. Record it with `vardemem rule {kind} "<one line>"`.'
+        return (f"{route}, which lives in repo `{home.get('repo')}`. Add it to "
+                f"`{home.get('file')}` through a change to that repo.")
     answer = run_vardemem(cmd, "rules", "--budget", "2")
     if not answer or answer[0] != 0:
         return None

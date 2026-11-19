@@ -275,6 +275,14 @@ def main() -> int:
         cases.append(("block on: a new feedback memory is denied and names the route",
                       rc == 0 and reason is not None and "vardemem route agent-rule" in reason
                       and "agent-rules" in reason))
+        (vault / ".vardemem.json").write_text(json.dumps({"homes": {
+            "agent-rules": {"kinds": ["agent-rule"], "file": "Rules/agent.md"},
+            "plugin-rules": {"kinds": ["plugin-rule"], "file": "RULES.md", "repo": "example-plugin"}}}),
+            encoding="utf-8")
+        rc, out = pre("plug.md", ftype="plugin", cfg=block_cfg(route_kinds={"plugin": "plugin-rule"}))
+        reason = denied(out)
+        cases.append(("block on: a repo home names the repo, not vardemem rule",
+                      reason is not None and "example-plugin" in reason and "vardemem rule" not in reason))
         rc, out = pre("ref.md", ftype="reference")
         reason = denied(out)
         cases.append(("block on: an unmapped type is denied and lists the mapped kinds",
