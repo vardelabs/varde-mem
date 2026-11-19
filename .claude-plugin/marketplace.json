@@ -20,7 +20,7 @@
       "name": "memory-hygiene",
       "source": "./plugins/memory-hygiene",
       "description": "A skill and a hook that keep Claude Code's auto-memory directory small: periodic consolidation with a snapshot undo, and a write-time routing check.",
-      "version": "0.2.1",
+      "version": "0.3.0",
       "author": {
         "name": "Varde Labs"
       }
