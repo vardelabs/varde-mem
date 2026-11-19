@@ -25,6 +25,7 @@ MEMORIES = {
     "wrapped.md": "---\nname: w\ntype: feedback\n---\nPrefer small commits\nwith one change each.\n",
     "long.md": "---\nname: l\ntype: feedback\n---\nFirst paragraph.\n\nSecond paragraph.\n",
     "list.md": "---\nname: s\ntype: feedback\n---\n- Keep A\n- Keep B\n",
+    "scalar.md": "---\nname: b\ndescription: |\n  type: feedback\ntype: plugin\n---\nA single line.\n",
     "repo.md": "---\nname: p\ntype: plugin\n---\nThe example plugin skips empty files.\n",
     "loose.md": "---\nname: u\ntype: reference\n---\nA link to read later.\n",
     "MEMORY.md": "- index\n",
@@ -67,6 +68,8 @@ def main() -> int:
         dry = run(home, vault, mem)
         cases.append(("dry run exits 0 and writes no home", dry.returncode == 0 and not rules.exists()))
         cases.append(("dry run lists what it would put", "would put rule.md as agent-rule" in dry.stdout))
+        cases.append(("dry run reports a repo home as apply does", "unplaced  repo.md: its home is in a repo" in dry.stdout))
+        cases.append(("dry run counts the same files as apply", "5 file(s) left for the operator" in dry.stdout))
 
         first = run(home, vault, mem, "--apply")
         out = first.stdout
@@ -77,11 +80,12 @@ def main() -> int:
         cases.append(("a wrapped paragraph is recorded as one line",
                       "- Prefer small commits with one change each." in recorded))
         cases.append(("two paragraphs are reported", "unplaced  long.md: body is not one paragraph" in out))
+        cases.append(("two type lines are reported", "unplaced  scalar.md: frontmatter has more than one" in out))
         cases.append(("a list body is reported", "unplaced  list.md: body is not one paragraph" in out))
         cases.append(("a repo home is reported", "unplaced  repo.md: its home is in a repo" in out))
         cases.append(("an unmapped type is reported", "unplaced  loose.md: type `reference`" in out))
         cases.append(("the index is not migrated", "MEMORY.md" not in out))
-        cases.append(("the count names the reported files", "4 file(s) left for the operator" in out))
+        cases.append(("the count names the reported files", "5 file(s) left for the operator" in out))
         cases.append(("no memory file is deleted or changed", snapshot(mem) == before))
 
         second = run(home, vault, mem, "--apply")

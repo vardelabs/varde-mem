@@ -16,6 +16,7 @@ Exit 0 when every file was placed or reported, 2 on a usage or config error.
 
 import argparse
 import importlib.util
+import json
 import re
 import subprocess
 import sys
@@ -25,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 HOOK_PATH = HERE.parent.parent / "hooks" / "enforce-memory-routing.py"
 RULE_CHARS = 280
 # A list item or a heading is its own fact, so joining the lines would merge facts.
+TYPE_LINE = re.compile(r"^\s*type:", re.MULTILINE)
 STRUCTURED_LINE = re.compile(r"^\s*(?:[-*+]\s|\d+[.)]\s|#)", re.MULTILINE)
 EXIT_ROUTED = 4
 RULE_TIMEOUT_SECONDS = 30
@@ -50,6 +52,11 @@ def body_of(text: str) -> str:
     return body.strip()
 
 
+def frontmatter_of(text: str) -> str:
+    end = text.find("\n---", 3) if text.startswith("---") else -1
+    return text[3:end] if end != -1 else ""
+
+
 def one_line(body: str) -> str | None:
     """The body as one rule line, or None when it needs a person to split it."""
     if not body or re.search(r"\n\s*\n", body) or STRUCTURED_LINE.search(body):
@@ -64,6 +71,10 @@ def plan(hook, cfg: dict, path: Path):
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError) as e:
         return None, None, f"unreadable: {e}"
+    # The hook's matcher takes the first `type:` line, which may sit inside a
+    # block scalar; an advisory can live with that, a write to a home cannot.
+    if len(TYPE_LINE.findall(frontmatter_of(text))) > 1:
+        return None, None, "frontmatter has more than one `type:` line"
     ftype = hook.frontmatter_type(text)
     kind = hook.route_kinds(cfg).get(ftype)
     if not kind:
@@ -74,20 +85,51 @@ def plan(hook, cfg: dict, path: Path):
     return kind, line, None
 
 
-def record(cmd: list, kind: str, line: str):
-    """(placed, message) from `vardemem rule`."""
+def vardemem_answer(cmd: list, *args: str):
+    """(returncode, last line said), or (None, why) when vardemem did not run."""
     try:
-        proc = subprocess.run([*cmd, "rule", kind, line], capture_output=True, text=True,
+        proc = subprocess.run([*cmd, *args], capture_output=True, text=True,
                               timeout=RULE_TIMEOUT_SECONDS, check=False)
     except (OSError, subprocess.SubprocessError) as e:
-        return False, f"vardemem failed: {e}"
+        return None, f"vardemem failed: {e}"
     said = (proc.stdout.strip() or proc.stderr.strip()).splitlines()
-    message = said[-1] if said else f"exit {proc.returncode}"
-    if proc.returncode == 0:
-        return True, message
-    if proc.returncode == EXIT_ROUTED:
-        return False, f"its home is in a repo: {message}"
-    return False, message
+    return proc.returncode, (said[-1] if said else f"exit {proc.returncode}")
+
+
+def routable(cmd: list, kind: str):
+    """(True, None) when `kind` has one home in this tree, else (False, why)."""
+    code, said = vardemem_answer(cmd, "route", kind)
+    if code != 0:
+        return False, said
+    try:
+        written_here = json.loads(said).get("written_here")
+    except (ValueError, AttributeError):
+        return False, f"unreadable route answer: {said}"
+    return (True, None) if written_here else (False, f"its home is in a repo: {said}")
+
+
+def record(cmd: list, kind: str, line: str):
+    """(placed, message) from `vardemem rule`."""
+    code, said = vardemem_answer(cmd, "rule", kind, line)
+    if code == 0:
+        return True, said
+    if code == EXIT_ROUTED:
+        return False, f"its home is in a repo: {said}"
+    return False, said
+
+
+def migrate_file(hook, cfg: dict, cmd: list, path: Path, apply: bool):
+    """(placed, report line) for one memory file."""
+    kind, line, why = plan(hook, cfg, path)
+    if kind and line and not apply:
+        ok, why = routable(cmd, kind)
+        if ok:
+            return True, f"would put {path.name} as {kind}: {line}"
+    elif kind and line:
+        placed, why = record(cmd, kind, line)
+        if placed:
+            return True, f"placed    {path.name} as {kind}: {why}"
+    return False, f"unplaced  {path.name}: {why}"
 
 
 def main() -> int:
@@ -117,17 +159,9 @@ def main() -> int:
     for path in sorted(mem.glob("*.md")):
         if path.name in hook.SKIP_NAMES:
             continue
-        kind, line, why = plan(hook, cfg, path)
-        if kind and line and not args.apply:
-            print(f"would put {path.name} as {kind}: {line}")
-            continue
-        if kind and line:
-            placed, why = record(cmd, kind, line)
-            if placed:
-                print(f"placed    {path.name} as {kind}: {why}")
-                continue
-        unplaced += 1
-        print(f"unplaced  {path.name}: {why}")
+        placed, report = migrate_file(hook, cfg, cmd, path, args.apply)
+        unplaced += not placed
+        print(report)
     print(f"{unplaced} file(s) left for the operator. Nothing was deleted.")
     return 0
 
