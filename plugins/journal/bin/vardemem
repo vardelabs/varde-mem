@@ -545,6 +545,10 @@ LINE_CHARS = 280   # the longest one spine line may be
 RAW_MAX = 16       # rollups up to this many days are built from raw day lines
 
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# The key of a per-session section file, `journal-<date>.<key>.md`. Strict on
+# purpose: it lands in a filename and a commit pathspec, so no dot, slash,
+# space or uppercase, and it cannot start with a hyphen and read as a flag.
+SECTION_KEY = re.compile(r"[a-z0-9][a-z0-9-]{0,99}")
 # A day line that records only that nothing happened, optionally after one
 # short leading clause ("Travel week, agent autonomous."). The clause used to
 # be hardcoded to one phrase, so "Holiday. No session logged." never
@@ -1256,15 +1260,40 @@ def _day_files(d, prefix):
     return [d / n for n in names if n.startswith(prefix) and n.endswith(".md")]
 
 
+def _split_day_name(name):
+    """(date, key) for a Journal directory name, or None when it is not a day
+    file. `journal-<date>.md` is the legacy day file (key ""), and
+    `journal-<date>.<key>.md` is one session's section of that day. The one
+    rule both `journal_files` and `journal_dates` use, so a day never reads as
+    covered by one and missing from the other."""
+    if not (name.startswith("journal-") and name.endswith(".md")):
+        return None
+    date, dot, key = name[len("journal-"):-len(".md")].partition(".")
+    if dot and not SECTION_KEY.fullmatch(key):
+        return None
+    return date, key
+
+
 def journal_files(date):
-    """A day's raw journals, oldest surface first. Usually one file, but an
-    archive cutover leaves the cutover day split across both directories with
-    DIFFERENT content in each, so a day is a list, not a file."""
-    cand = [journal_dir() / ("journal-%s.md" % date)]
+    """A day's raw journals: the archive file, the legacy day file, then each
+    session's section file sorted by key. An archive cutover leaves the
+    cutover day split across both directories, and concurrent sessions each
+    write their own section file, so a day is a list, not a file. The order
+    is computed from names alone, so every reader sees the same order."""
+    jdir = journal_dir()
+    cand = [jdir / ("journal-%s.md" % date)]
     arc = archive_dir()
     if arc is not None:
         cand.insert(0, arc / ("%s.md" % date))
-    return [p for p in cand if _present(p)]
+    # Probe the fixed names before listing: an unreachable directory must
+    # refuse as "Could not reach" from _present, the message every caller and
+    # interpreter already agrees on, before _day_files gets to it.
+    found = [p for p in cand if _present(p)]
+    sections = sorted(
+        (split[1], p) for p in _day_files(jdir, "journal-%s." % date)
+        for split in [_split_day_name(p.name)]
+        if split and split[0] == date and split[1])
+    return found + [p for _, p in sections if _present(p)]
 
 
 def journal_dates():
@@ -1278,13 +1307,15 @@ def journal_dates():
     missed when the other two were unified."""
     found, bad = set(), []
     for p in _day_files(journal_dir(), "journal-"):
-        # The EXACT canonical name, not a date found anywhere in it.
+        # The EXACT day-file shape, not a date found anywhere in the name.
         # `DATE.search` accepted `journal-2026-01-01-backup.md` as covering
-        # that day, while journal_files() only opens `journal-<date>.md`, so
-        # `missing` reported the spine current for a day `draft` and `put`
-        # both refuse as having no journal. The two filename rules have to be
-        # one rule, the same way the two DATE gates were unified.
-        stem = p.stem[len("journal-"):]
+        # that day while journal_files() never opens it, so `missing` reported
+        # the spine current for a day `draft` and `put` both refuse. The two
+        # filename rules are one rule: `_split_day_name`.
+        split = _split_day_name(p.name)
+        if split is None:
+            continue
+        stem = split[0]
         if real_date(stem):
             # Gated on real_date: only a genuine day file pays for its own
             # reachability. _present dies on the first one it finds broken,
@@ -2984,6 +3015,42 @@ def cmd_selftest(args):
         rc, out = _run(jdir, "missing")
         check(rc == 1 and "pruned_before" in out,
               "a pruned_before that is not a real date is refused")
+    finally:
+        shutil.rmtree(td, ignore_errors=True)
+
+    # Concurrent sessions each write their own section file for a day, so a
+    # day is the union of the legacy file and every section file. A day with
+    # only section files must count as journaled and read in full, in one
+    # order computed from names alone.
+    td, jdir, spine_md = _mkroot([], ndays=0)
+    try:
+        (jdir / "journal-2026-01-01.md").write_text("LEGACY-ONLY", encoding="utf-8")
+        (jdir / "journal-2026-01-02.surface-b.md").write_text("SECTION-B", encoding="utf-8")
+        (jdir / "journal-2026-01-02.surface-a.md").write_text("SECTION-A", encoding="utf-8")
+        (jdir / "journal-2026-01-03.md").write_text("MIXED-LEGACY", encoding="utf-8")
+        (jdir / "journal-2026-01-03.surface-a.md").write_text("MIXED-SECTION", encoding="utf-8")
+        (jdir / "journal-2026-01-04.Bad Key.md").write_text("BADKEY", encoding="utf-8")
+        (jdir / "journal-2026-01-05-backup.md").write_text("BACKUP", encoding="utf-8")
+        rc, out = _run(jdir, "missing")
+        check(rc == 0 and all(d in out for d in
+                              ("2026-01-01", "2026-01-02", "2026-01-03")),
+              "`missing` counts a day that has only section files")
+        check("2026-01-04" not in out and "2026-01-05" not in out,
+              "a bad section key or a backup name does not count as a day")
+        rc, out = _run(jdir, "draft", "2026-01-01")
+        check(rc == 0 and "LEGACY-ONLY" in out,
+              "a legacy-only day still reads in full")
+        rc, out = _run(jdir, "draft", "2026-01-02")
+        check(rc == 0 and 0 <= out.find("SECTION-A") < out.find("SECTION-B"),
+              "a section-only day reads every section, sorted by key")
+        rc, out = _run(jdir, "draft", "2026-01-03")
+        check(rc == 0 and 0 <= out.find("MIXED-LEGACY") < out.find("MIXED-SECTION"),
+              "a mixed day reads the legacy file first, then its sections")
+        rc, out = _run(jdir, "draft", "2026-01-04")
+        check(rc == 1 and "BADKEY" not in out,
+              "a section file with an invalid key is never read")
+        rc, out = _run(jdir, "put", "2026-01-02", "two sections")
+        check(rc == 0, "`put` accepts a day that has only section files")
     finally:
         shutil.rmtree(td, ignore_errors=True)
 
